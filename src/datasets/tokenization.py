@@ -1,6 +1,6 @@
+from pathlib import Path
 from typing import List
 
-from pathlib import Path
 from tokenizers import Tokenizer
 from tokenizers import decoders
 from tokenizers.models import WordPiece
@@ -10,10 +10,10 @@ from transformers import BertTokenizer, PreTrainedTokenizer
 
 
 class WordPieceTokenizer:
-    def __init__(self, sentence_list, other_id: int, pad_flag: bool,
+    def __init__(self, sentence_list: List[List[str]], other_id: int, pad_flag: bool,
                  max_sent_len: int = None, pretrained_name: str = None):
         """
-        :param sentence_list: список предложений для обучения
+        :param sentence_list: список предложений для обучения, разбитых на размеченные части
         :param other_id: id класса 'other'
         :param pad_flag: нужно ли приводить последовательности токенов к одной длине
         :param max_sent_len: максимальная допустимая длина предложений в токенах (+2)
@@ -59,7 +59,7 @@ class WordPieceTokenizer:
             label_id_list.extend([self.other_id] * pad_len)
 
         token_id_list.append(self.word2index[self.eos_token])
-        token_id_list.append(self.other_id)
+        label_id_list.append(self.other_id)
         return token_id_list, label_id_list
 
     def decode(self, token_id_list: List[int], label_list: List[int]):
@@ -68,23 +68,28 @@ class WordPieceTokenizer:
         :param label_list: последовательность целевых меток (для одного предложения)
         :return: последовательный список слов из предложения, список соответствующих им меток
         """
-        predicted_tokens = self._tokenizer.decode(token_id_list, skip_special_tokens=True).split()
         special_tokens = {self.unknown_token, self.sos_token, self.eos_token, self.pad_token}
+        predicted_tokens = []  # self._tokenizer.decode(token_id_list, skip_special_tokens=True).split()
         predicted_labels = []
         word = ""
-        possible_labels = dict()
+        possible_labels = {}
         for token_id, label_id in zip(token_id_list, label_list):
             token = self.index2word[token_id]
-            if word != "" and (token[:2] != "##" or token in special_tokens):
+            if word != "" and (len(token) < 2 or token[:2] != "##"):
                 final_label = sorted([(num, tag) for tag, num in possible_labels.items()])[-1][1]
                 predicted_labels.append(final_label)
-                possible_labels = dict()
+                predicted_tokens.append(word)
+                possible_labels = {}
                 word = ""
             if token == self.eos_token:
                 break
             if token == self.unknown_token or token not in special_tokens:
                 word += token[2:] if token[:2] == "##" else token
                 possible_labels[label_id] = possible_labels.get(label_id, 0) + 1
+        if word != "":
+            final_label = sorted([(num, tag) for tag, num in possible_labels.items()])[-1][1]
+            predicted_labels.append(final_label)
+            predicted_tokens.append(word)
         return predicted_tokens, predicted_labels
 
     def _truncate(self, token_id_list: List[int], label_id_list: List[int]):
@@ -96,13 +101,13 @@ class WordPieceTokenizer:
 
         return token_id_list, label_id_list
 
-    def _get_max_length_in_tokens(self, sentence_list: List[str]) -> int:
+    def _get_max_length_in_tokens(self, sentence_list: List[List[str]]) -> int:
         max_length = 0
         for sentence in sentence_list:
-            max_length = max(max_length, len(self([sentence], [0], False)))
+            max_length = max(max_length, len(self(sentence, [0], False)))
         return max_length
 
-    def _train(self, sentence_list: List[str], path_to_pretrained: str = None) -> Tokenizer:
+    def _train(self, sentence_list: List[List[str]], path_to_pretrained: str = None) -> Tokenizer:
         # Pretrained flag
         self._downloaded = False
         # Special tokens
@@ -124,7 +129,7 @@ class WordPieceTokenizer:
             self._tokenizer.train_from_iterator(sentence_list, trainer)
         return self._tokenizer
 
-    def _load(self, pretrained_name: str, sentence_list) -> PreTrainedTokenizer:
+    def _load(self, pretrained_name: str, sentence_list: List[List[str]]) -> PreTrainedTokenizer:
         # Pretrained flag
         self._downloaded = True
         # Download
@@ -137,11 +142,3 @@ class WordPieceTokenizer:
         self.eos_token = self._tokenizer.sep_token
         self.pad_token = self._tokenizer.pad_token
         return self._tokenizer
-
-
-class LabelDecoder:
-    def __init__(self):
-        pass
-
-    def __call__(self, *args, **kwargs):
-        pass
