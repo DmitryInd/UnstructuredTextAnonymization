@@ -27,7 +27,6 @@ if __name__ == '__main__':
     # Pytorch lightning
     ner_model = BertNER(pretrained_name=model_config["pretrained_model_path"],
                         encoder_vocab_size=len(train_dataset.tokenizer.index2word),
-                        tokenizer=train_dataset.tokenizer,
                         num_classes=len(train_dataset.index2label),
                         lr=model_config["lr"],
                         total_steps=model_config["epochs"] * len(train_dataloader),

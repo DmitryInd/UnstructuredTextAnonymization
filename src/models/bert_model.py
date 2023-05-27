@@ -6,11 +6,10 @@ from transformers import BertModel
 
 
 class BertNER(pl.LightningModule):
-    def __init__(self, pretrained_name: str, encoder_vocab_size: int, tokenizer, num_classes: int,
+    def __init__(self, pretrained_name: str, encoder_vocab_size: int, num_classes: int,
                  lr: float, total_steps: int, div_factor: int, other_index: int):
         super().__init__()
-        self.save_hyperparameters(ignore='tokenizer')
-        self.tokenizer = tokenizer
+        self.save_hyperparameters()
         self.model = BertModel.from_pretrained(pretrained_name)
         self.activation = nn.ReLU()
         self.head = nn.Linear(self.model.config.hidden_size, num_classes)
@@ -73,7 +72,7 @@ class BertNER(pl.LightningModule):
 
     def test_step(self, batch, batch_idx):
         _, x, y = batch
-        hard_pred = torch.argmax(self(x), dim=1)
+        hard_pred = torch.argmax(self(x).transpose(2, 1), dim=1)
         recall = self.recall(hard_pred, y)
         precision = self.precision(hard_pred, y)
         f1 = self.f1_score(hard_pred, y)

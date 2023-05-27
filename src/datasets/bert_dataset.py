@@ -89,6 +89,7 @@ class XMLDataset(Dataset):
                                             pretrained_name=pretrained_tokenizer)
         tokenized = [self.tokenizer(s, t) for s, t in zip(tokenized_source_list, tokenized_target_list)]
         self._tokenized_source_list, self._tokenized_target_list = map(list, zip(*tokenized))
+        self.record2idx = {record_id: i for i, record_id in enumerate(self._record_ids)}
         self._record_ids = torch.tensor(self._record_ids, device=device)
         self.device = device
 
