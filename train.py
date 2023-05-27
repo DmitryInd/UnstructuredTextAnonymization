@@ -4,6 +4,8 @@ from torch.utils.data import DataLoader
 from pytorch_lightning.callbacks import ModelCheckpoint
 from transformers import set_seed
 import pytorch_lightning as pl
+from utils.log_reader import TensorBoardReader
+from pathlib import Path
 import yaml
 
 if __name__ == '__main__':
@@ -20,7 +22,7 @@ if __name__ == '__main__':
                              max_length=data_config["max_token_number"])
     train_dataloader = DataLoader(train_dataset, shuffle=True,
                                   batch_size=data_config["batch_size"])
-    val_dataloader = DataLoader(val_dataset, shuffle=True,
+    val_dataloader = DataLoader(val_dataset, shuffle=False,
                                 batch_size=data_config["batch_size"], drop_last=True)
     # Pytorch lightning
     ner_model = BertNER(pretrained_name=model_config["pretrained_model_path"],
@@ -40,3 +42,6 @@ if __name__ == '__main__':
     }
     trainer = pl.Trainer(**trainer_args, enable_progress_bar=True)
     trainer.fit(ner_model, train_dataloader, val_dataloader)
+    # Plot graphics
+    t_reader = TensorBoardReader(Path(model_config["log_dir"]) / Path("lightning_logs"))
+    t_reader.plot_tensorboard_graphics()

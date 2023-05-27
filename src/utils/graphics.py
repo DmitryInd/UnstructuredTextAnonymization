@@ -1,70 +1,11 @@
-import re
-from pathlib import Path
-from typing import Iterable, Dict
 from typing import List, Tuple
 
 import numpy as np
-import pandas as pd
 import torch
 from matplotlib import pyplot as plt
 from sklearn.metrics import classification_report
-from tensorboard.backend.event_processing import event_accumulator
 from torch import nn
 from torch.utils.data import DataLoader
-
-
-def get_version(path: Path):
-    pattern = re.compile(r'version_(\d+)$')
-    match = pattern.match(str(path.name))
-    if match is not None:
-        return int(match.group(1))
-    return -1
-
-
-def get_most_recent_tensorboard_log_and_ckpt(root_path="./"):
-    root_path = Path(root_path)
-    log_dirs = sorted([(get_version(p), p) for p in root_path.iterdir() if p.is_dir()])
-    last_version_path = log_dirs[-1][1]
-    checkpoint_dir = last_version_path / Path("checkpoints")
-    return last_version_path.__str__(), checkpoint_dir.glob("*.ckpt").__next__().__str__()
-
-
-def parse_tensorboard(path: str, scalars: Iterable):
-    """Returns a dictionary of numpy arrays for each requested scalar"""
-    ea = event_accumulator.EventAccumulator(
-        path,
-        size_guidance={event_accumulator.SCALARS: 0},
-    )
-    _absorb_print = ea.Reload()
-    # make sure the scalars are in the event accumulator tags
-    assert all(
-        s in ea.Tags()["scalars"] for s in scalars
-    ), "some scalars were not found in the event accumulator"
-    return {k: pd.DataFrame(ea.Scalars(k))["value"].to_numpy() for k in scalars}
-
-
-def plot_tensorboard_graphics(data: Dict[str, np.ndarray]):
-    subplots = [['val_loss', 'train_loss'],
-                ['val_acc', 'train_acc']]
-    subplots_titles = [("История ошибки", "Ошибка"),
-                       ("История точности", "Точность")]
-    labels = {'train_loss': 'Train',
-              'train_acc': 'Train',
-              'val_loss': 'Valid',
-              'val_acc': 'Valid'}
-
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-    for i, (scalar_names, (title, y_label)) in enumerate(zip(subplots, subplots_titles)):
-        for name in scalar_names:
-            axes[i].plot(list(range(1, 1 + len(data[name]))),
-                         data[name], label=labels[name])
-
-        axes[i].set_title(title)
-        axes[i].set_xlabel("Эпоха")
-        axes[i].set_ylabel(y_label)
-        axes[i].grid(ls=':')
-        axes[i].legend()
-    plt.show()
 
 
 @torch.no_grad()

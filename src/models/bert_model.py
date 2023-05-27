@@ -9,6 +9,7 @@ class BertNER(pl.LightningModule):
     def __init__(self, pretrained_name: str, encoder_vocab_size: int, tokenizer, num_classes: int,
                  lr: float, total_steps: int, div_factor: int, other_index: int):
         super().__init__()
+        self.save_hyperparameters(ignore='tokenizer')
         self.tokenizer = tokenizer
         self.model = BertModel.from_pretrained(pretrained_name)
         self.activation = nn.ReLU()
