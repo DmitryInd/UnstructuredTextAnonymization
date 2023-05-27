@@ -1,71 +1,41 @@
 import torch
 import pytorch_lightning as pl
 from torch import nn
+from torchmetrics import Recall, Precision, F1Score
+from transformers import BertModel
 
 
-class VGG16(pl.LightningModule):
-    def __init__(self, num_classes, lr=2e-4, num_epochs=10, steps_per_epoch=35, div_factor=1e+3):
+class BertNER(pl.LightningModule):
+    def __init__(self, pretrained_name: str, encoder_vocab_size: int, tokenizer, num_classes: int,
+                 lr: float, total_steps: int, div_factor: int, other_index: int):
         super().__init__()
-        self.save_hyperparameters()
-        self.num_epochs = num_epochs
-        self.steps_per_epoch = steps_per_epoch
-        self.div_factor = div_factor
+        self.tokenizer = tokenizer
+        self.model = BertModel.from_pretrained(pretrained_name)
+        self.activation = nn.ReLU()
+        self.head = nn.Linear(self.model.config.hidden_size, num_classes)
+        # Expanding or reducing the space of the encoder embeddings
+        self.model.resize_token_embeddings(encoder_vocab_size)
+        # Parameters of optimization
+        self.criterion = nn.CrossEntropyLoss(reduction='mean')
         self.lr = lr
-        self.num_classes = num_classes
-        self.model = nn.Sequential(
-            nn.Conv2d(3, 64, 3, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(64, 64, 3, padding=1),
-            nn.ReLU(),
-            nn.MaxPool2d(2, 2),
-            nn.Conv2d(64, 128, 3, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(128, 128, 3, padding=1),
-            nn.ReLU(),
-            nn.MaxPool2d(2, 2),
-            nn.Conv2d(128, 256, 3, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(256, 256, 3, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(256, 256, 3, padding=1),
-            nn.ReLU(),
-            nn.MaxPool2d(2, 2),
-            nn.Conv2d(256, 512, 3, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(512, 512, 3, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(512, 512, 3, padding=1),
-            nn.ReLU(),
-            nn.MaxPool2d(2, 2),
-            nn.Conv2d(512, 512, 3, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(512, 512, 3, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(512, 512, 3, padding=1),
-            nn.ReLU(),
-            nn.MaxPool2d(2, 2),
-            nn.Flatten(),
-            nn.Linear(25088, 4096),
-            nn.Dropout(p=0.5),
-            nn.ReLU(),
-            nn.Linear(4096, 4096),
-            nn.Dropout(p=0.5),
-            nn.ReLU(),
-            nn.Linear(4096, num_classes)
-        )
-        self.loss_fn = nn.CrossEntropyLoss()
-        self.accuracy = Accuracy(task="multiclass", num_classes=num_classes)
+        self.div_factor = div_factor
+        self.total_steps = total_steps
+        # Metrics
+        self.recall = Recall(task="multiclass", num_classes=num_classes, ignore_index=other_index)
+        self.precision = Precision(task="multiclass", num_classes=num_classes)
+        self.f1_score = F1Score(task="multiclass", num_classes=num_classes)
 
     def forward(self, x):
-        x = self.model(x)
+        x = self.model(x).last_hidden_state
+        x = self.activation(x)
+        x = self.head(x)
         return x
 
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(self.parameters(), lr=self.lr)
         scheduler = torch.optim.lr_scheduler.OneCycleLR(
             optimizer=optimizer,
-            epochs=self.num_epochs,
-            steps_per_epoch=self.steps_per_epoch,
+            total_steps=self.total_steps,
             max_lr=self.lr,
             pct_start=0.1,
             anneal_strategy='linear',
@@ -74,24 +44,38 @@ class VGG16(pl.LightningModule):
         return [optimizer], [scheduler]
 
     def training_step(self, batch, batch_idx):
-        x, y = batch
-        preds = self(x)
-        loss = self.loss_fn(preds, y)
-        acc = self.accuracy(torch.argmax(preds, dim=1), y)
+        _, x, y = batch
+        predictions = self(x).transpose(2, 1)  # B, L, C -> B, C, L
+        loss = self.criterion(predictions, y)
+        hard_pred = torch.argmax(predictions, dim=1)
+        recall = self.recall(hard_pred, y)
+        precision = self.precision(hard_pred, y)
+        f1 = self.f1_score(hard_pred, y)
         self.log('train_loss', loss.item(), on_step=False, on_epoch=True, logger=True)
-        self.log('train_acc', acc, on_step=False, on_epoch=True, logger=True)
+        self.log('train_recall', recall, on_step=False, on_epoch=True, logger=True)
+        self.log('train_precision', precision, on_step=False, on_epoch=True, logger=True)
+        self.log('train_f1', f1, on_step=False, on_epoch=True, logger=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
-        x, y = batch
-        preds = self(x)
-        loss = self.loss_fn(preds, y)
-        acc = self.accuracy(torch.argmax(preds, dim=1), y)
+        _, x, y = batch
+        predictions = self(x).transpose(2, 1)  # B, L, C -> B, C, L
+        loss = self.criterion(predictions, y)
+        hard_pred = torch.argmax(predictions, dim=1)
+        recall = self.recall(hard_pred, y)
+        precision = self.precision(hard_pred, y)
+        f1 = self.f1_score(hard_pred, y)
         self.log('val_loss', loss, on_epoch=True, prog_bar=True, logger=True)
-        self.log('val_acc', acc, on_epoch=True, prog_bar=True, logger=True)
+        self.log('val_recall', recall, on_step=False, on_epoch=True, logger=True)
+        self.log('val_precision', precision, on_step=False, on_epoch=True, logger=True)
+        self.log('val_f1', f1, on_step=False, on_epoch=True, logger=True)
 
     def test_step(self, batch, batch_idx):
-        x, y = batch
-        preds = self(x)
-        acc = self.accuracy(torch.argmax(preds, dim=1), y)
-        self.log('test_acc', acc, on_epoch=True, prog_bar=True)
+        _, x, y = batch
+        hard_pred = torch.argmax(self(x), dim=1)
+        recall = self.recall(hard_pred, y)
+        precision = self.precision(hard_pred, y)
+        f1 = self.f1_score(hard_pred, y)
+        self.log('test_recall', recall, on_step=False, on_epoch=True, logger=True)
+        self.log('test_precision', precision, on_step=False, on_epoch=True, logger=True)
+        self.log('test_f1', f1, on_step=False, on_epoch=True, logger=True)

@@ -27,7 +27,8 @@ class WordPieceTokenizer:
             self._tokenizer = self._train(sentence_list, pretrained_name)
         else:
             self._tokenizer = self._load(pretrained_name, sentence_list)
-
+        if self.pad_flag and self.max_sent_len is None:
+            self.max_sent_len = self._get_max_length_in_tokens(sentence_list)
         # Preparing dictionaries mapping tokens and ids
         self.word2index = self._tokenizer.get_vocab()
         self.index2word = {w_id: word for word, w_id in self.word2index.items()}
@@ -134,8 +135,6 @@ class WordPieceTokenizer:
         self._downloaded = True
         # Download
         self._tokenizer = BertTokenizer.from_pretrained(pretrained_name)
-        if self.pad_flag and self.max_sent_len is None:
-            self.max_sent_len = self._get_max_length_in_tokens(sentence_list)
         # Special tokens
         self.unknown_token = self._tokenizer.unk_token
         self.sos_token = self._tokenizer.cls_token

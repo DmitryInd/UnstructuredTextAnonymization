@@ -48,7 +48,7 @@ LABEL_MEMBERSHIP = [
 ]
 
 
-class BertDataset(Dataset):
+class XMLDataset(Dataset):
     def __init__(self, path_to_folder: str,
                  label_aliases: List[Tuple[str, List[str]]] = None,
                  pretrained_tokenizer: str = None, max_length=100,
