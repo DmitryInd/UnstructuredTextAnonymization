@@ -28,7 +28,7 @@ class PretrainedBertNER(pl.LightningModule):
     def forward(self, x):
         x = self.model(x).last_hidden_state
         x = self.activation(x)
-        x = self.head(x)
+        x = self.head(x)  # B, L, C
         return x
 
     def configure_optimizers(self):
@@ -47,7 +47,7 @@ class PretrainedBertNER(pl.LightningModule):
         _, x, y = batch
         predictions = self(x).transpose(2, 1)  # B, L, C -> B, C, L
         loss = self.criterion(predictions, y)
-        hard_pred = torch.argmax(predictions, dim=1)
+        hard_pred = torch.argmax(predictions, dim=-2)
         recall = self.recall(hard_pred, y)
         precision = self.precision(hard_pred, y)
         f1 = self.f1_score(hard_pred, y)
@@ -61,7 +61,7 @@ class PretrainedBertNER(pl.LightningModule):
         _, x, y = batch
         predictions = self(x).transpose(2, 1)  # B, L, C -> B, C, L
         loss = self.criterion(predictions, y)
-        hard_pred = torch.argmax(predictions, dim=1)
+        hard_pred = torch.argmax(predictions, dim=-2)
         recall = self.recall(hard_pred, y)
         precision = self.precision(hard_pred, y)
         f1 = self.f1_score(hard_pred, y)
@@ -72,7 +72,7 @@ class PretrainedBertNER(pl.LightningModule):
 
     def test_step(self, batch, batch_idx):
         _, x, y = batch
-        hard_pred = torch.argmax(self(x).transpose(2, 1), dim=1)
+        hard_pred = torch.argmax(self(x).transpose(2, 1), dim=-2)
         recall = self.recall(hard_pred, y)
         precision = self.precision(hard_pred, y)
         f1 = self.f1_score(hard_pred, y)

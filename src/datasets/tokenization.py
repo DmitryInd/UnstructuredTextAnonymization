@@ -26,7 +26,7 @@ class WordPieceTokenizer:
         if pretrained_name is None or Path(pretrained_name).exists():
             self._tokenizer = self._train(sentence_list, pretrained_name)
         else:
-            self._tokenizer = self._load(pretrained_name, sentence_list)
+            self._tokenizer = self._load(pretrained_name)
         if self.pad_flag and self.max_sent_len is None:
             self.max_sent_len = self._get_max_length_in_tokens(sentence_list)
         # Preparing dictionaries mapping tokens and ids
@@ -94,6 +94,9 @@ class WordPieceTokenizer:
         return predicted_tokens, predicted_labels
 
     def _truncate(self, token_id_list: List[int], label_id_list: List[int]):
+        """
+        Возвращает последовательность токенов, обрезанную до максимального размера без дробления слова в конце
+        """
         for i, token_id in enumerate(reversed(token_id_list)):
             if self.index2word[token_id][:2] != "##" and len(token_id_list) - i - 1 <= self.max_sent_len + 1:
                 token_id_list = token_id_list[:-i - 1]
@@ -130,7 +133,7 @@ class WordPieceTokenizer:
             self._tokenizer.train_from_iterator(sentence_list, trainer)
         return self._tokenizer
 
-    def _load(self, pretrained_name: str, sentence_list: List[List[str]]) -> PreTrainedTokenizer:
+    def _load(self, pretrained_name: str) -> PreTrainedTokenizer:
         # Pretrained flag
         self._downloaded = True
         # Download
