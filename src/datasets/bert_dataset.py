@@ -11,15 +11,15 @@ LABEL_MEMBERSHIP = [
     (
         'NAME',
         [
-         'NAME',
-         'DOCTOR',
-         'PATIENT',
-         'USERNAME',
-         'HCPNAME',
-         'RELATIVEPROXYNAME',
-         'PTNAME',
-         'PTNAMEINITIAL',
-         'KEYVALUE',
+            'NAME',
+            'DOCTOR',
+            'PATIENT',
+            'USERNAME',
+            'HCPNAME',
+            'RELATIVEPROXYNAME',
+            'PTNAME',
+            'PTNAMEINITIAL',
+            'KEYVALUE',
         ]
     ),
     ('PROFESSION', ['PROFESSION']),
@@ -51,11 +51,12 @@ LABEL_MEMBERSHIP = [
 class XMLDataset(Dataset):
     def __init__(self, path_to_folder: str,
                  label_aliases: List[Tuple[str, List[str]]] = None,
-                 pretrained_tokenizer: str = None, max_length=100,
+                 is_uncased=False, pretrained_tokenizer: str = None, max_length=100,
                  device="cuda:0"):
         """
         :param path_to_folder: путь к директории с xml файлами, содержащими размеченные данные
         :param label_aliases: упорядоченный список пар меток и их возможных псевдонимов
+        :param is_uncased: приводить все символы к нижнему регистру или нет
         :param pretrained_tokenizer: путь к сохранённым параметрам токенизатора
         :param max_length: максимальное количество токенов в примере
         :param device: устройство, на котором будет исполняться запрос
@@ -72,6 +73,7 @@ class XMLDataset(Dataset):
         self.index2label = list(list(zip(*label_aliases))[0])
         self.label2index = {label: i for i, label in enumerate(self.index2label)}
         # Start of reading files
+        self.is_uncased = is_uncased
         self._record_ids = []
         tokenized_source_list = []
         tokenized_target_list = []
@@ -121,6 +123,8 @@ class XMLDataset(Dataset):
                                         (child.tail if child.tail is not None else ''))
                     target_labels.append('O')
 
+            if self.is_uncased:
+                source_words = [s_part.lower() for s_part in source_words]
             record_ids.append(record_id)
             source_batch.append(source_words)
             target_batch.append(target_labels)

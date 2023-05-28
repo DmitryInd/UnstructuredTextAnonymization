@@ -15,9 +15,11 @@ if __name__ == '__main__':
     model_config = yaml.load(open("configs/bert_model_config.yaml", 'r'), Loader=yaml.Loader)
     # Data processing
     train_dataset = XMLDataset(data_config["train_data_path"],
+                               is_uncased=data_config["is_uncased"],
                                pretrained_tokenizer=data_config["pretrained_tokenizer_path"],
                                max_length=data_config["max_token_number"])
     val_dataset = XMLDataset(data_config["validate_data_path"],
+                             is_uncased=data_config["is_uncased"],
                              pretrained_tokenizer=data_config["pretrained_tokenizer_path"],
                              max_length=data_config["max_token_number"])
     train_dataloader = DataLoader(train_dataset, shuffle=True,

@@ -1,6 +1,7 @@
 train_data_path: "./data/token/train"
 validate_data_path: "./data/token/test"
 other_label: "O"
-pretrained_tokenizer_path: "bert-base-uncased"
+is_uncased: False
+pretrained_tokenizer_path: "bert-base-cased"
 max_token_number: 100
 batch_size: 32
