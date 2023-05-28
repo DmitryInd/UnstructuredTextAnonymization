@@ -1,12 +1,16 @@
-from models.bert_model import BertNER
-from datasets.bert_dataset import XMLDataset
-from torch.utils.data import DataLoader
-from pytorch_lightning.callbacks import ModelCheckpoint
-from transformers import set_seed
-import pytorch_lightning as pl
-from utils.log_reader import TensorBoardReader
+import sys
 from pathlib import Path
+
+import pytorch_lightning as pl
 import yaml
+from pytorch_lightning.callbacks import ModelCheckpoint
+from torch.utils.data import DataLoader
+from transformers import set_seed
+
+sys.path.insert(1, "./src")
+from datasets.ner_dataset import XMLDataset
+from models.bert_model import PretrainedBertNER
+from utils.log_reader import TensorBoardReader
 
 if __name__ == '__main__':
     set_seed(42)
@@ -27,13 +31,13 @@ if __name__ == '__main__':
     val_dataloader = DataLoader(val_dataset, shuffle=False,
                                 batch_size=data_config["batch_size"], drop_last=True)
     # Pytorch lightning
-    ner_model = BertNER(pretrained_name=model_config["pretrained_model_path"],
-                        encoder_vocab_size=len(train_dataset.tokenizer.index2word),
-                        num_classes=len(train_dataset.index2label),
-                        lr=model_config["lr"],
-                        total_steps=model_config["epochs"] * len(train_dataloader),
-                        div_factor=model_config["div_factor"],
-                        other_index=train_dataset.label2index[data_config["other_label"]])
+    ner_model = PretrainedBertNER(pretrained_name=model_config["pretrained_model_path"],
+                                  encoder_vocab_size=len(train_dataset.tokenizer.index2word),
+                                  num_classes=len(train_dataset.index2label),
+                                  lr=model_config["lr"],
+                                  total_steps=model_config["epochs"] * len(train_dataloader),
+                                  div_factor=model_config["div_factor"],
+                                  other_index=train_dataset.label2index[data_config["other_label"]])
     ner_checkpoint_callback = ModelCheckpoint(filename='best-{epoch}', monitor='val_recall', mode='max', save_top_k=1)
     trainer_args = {
         "accelerator": "gpu",

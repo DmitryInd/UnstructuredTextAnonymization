@@ -26,7 +26,7 @@ LABEL_MEMBERSHIP = [
     (
         'LOCATION',
         [
-            'LOCATION', 'HOSPITAL', 'ORGANIZATION', 'URL', 'STREET',
+            'LOCATION', 'HOSPITAL', 'ORGANIZATION', 'STREET',
             'STATE', 'CITY', 'COUNTRY', 'ZIP', 'LOCATION-OTHER',
             'PROTECTED_ENTITY', 'PROTECTED ENTITY', 'NATIONALITY'
         ]
@@ -42,19 +42,21 @@ LABEL_MEMBERSHIP = [
     ),
     (
         'CONTACT',
-        ['EMAIL', 'FAX', 'PHONE', 'CONTACT', 'IPADDR', 'IPADDRESS']
+        ['EMAIL', 'FAX', 'PHONE', 'CONTACT', 'IPADDR', 'IPADDRESS', 'URL']
     ),
     ('O', ['O'])
 ]
 
 
 class XMLDataset(Dataset):
-    def __init__(self, path_to_folder: str,
+    def __init__(self, path_to_folder: str, xml_type="2006", anonymization=None,
                  label_aliases: List[Tuple[str, List[str]]] = None,
                  is_uncased=False, pretrained_tokenizer: str = None, max_length=100,
                  device="cuda:0"):
         """
         :param path_to_folder: путь к директории с xml файлами, содержащими размеченные данные
+        :param xml_type: тип набора данных, который будет считываться
+        :param anonymization: класс для обезличивания защищённых данных (None -> без обезличивания)
         :param label_aliases: упорядоченный список пар меток и их возможных псевдонимов
         :param is_uncased: приводить все символы к нижнему регистру или нет
         :param pretrained_tokenizer: путь к сохранённым параметрам токенизатора
@@ -73,12 +75,16 @@ class XMLDataset(Dataset):
         self.index2label = list(list(zip(*label_aliases))[0])
         self.label2index = {label: i for i, label in enumerate(self.index2label)}
         # Start of reading files
+        self.anonymization = anonymization if anonymization is not None else lambda _1, _2, x: x
         self.is_uncased = is_uncased
         self._record_ids = []
         tokenized_source_list = []
         tokenized_target_list = []
         for xml_file in path.glob("*.xml"):
-            ids_batch, source_batch, target_batch = self._read_xml(str(xml_file))
+            read_xml = None
+            if xml_type == "2006":
+                read_xml = self._read_2006_xml
+            ids_batch, source_batch, target_batch = read_xml(str(xml_file))
             self._record_ids.extend(ids_batch)
             tokenized_source_list.extend(source_batch)
             for labels in target_batch:
@@ -95,7 +101,7 @@ class XMLDataset(Dataset):
         self._record_ids = torch.tensor(self._record_ids, device=device)
         self.device = device
 
-    def _read_xml(self, path_to_file: str) -> Tuple[List[int], List[List[str]], List[List[str]]]:
+    def _read_2006_xml(self, path_to_file: str) -> Tuple[List[int], List[List[str]], List[List[str]]]:
         tree = ET.ElementTree(file=path_to_file)
         root = tree.getroot()
         records = root.findall('RECORD')
@@ -109,8 +115,9 @@ class XMLDataset(Dataset):
             text = record.find('TEXT')
             for child in text.iter():
                 if child.tag == 'PHI':
-                    source_words.append(child.text)
-                    target_labels.append(self.alias2label.get(child.get("TYPE"), 'O'))
+                    label = self.alias2label.get(child.get("TYPE"), 'O')
+                    source_words.append(self.anonymization(label, child.get("TYPE"), child.text))
+                    target_labels.append(label)
                     if child.tail is not None:
                         source_words.append(child.tail)
                         target_labels.append('O')

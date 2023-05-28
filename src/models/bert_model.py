@@ -5,7 +5,7 @@ from torchmetrics import Recall, Precision, F1Score
 from transformers import BertModel
 
 
-class BertNER(pl.LightningModule):
+class PretrainedBertNER(pl.LightningModule):
     def __init__(self, pretrained_name: str, encoder_vocab_size: int, num_classes: int,
                  lr: float, total_steps: int, div_factor: int, other_index: int):
         super().__init__()
