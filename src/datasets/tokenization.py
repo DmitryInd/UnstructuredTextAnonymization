@@ -51,16 +51,16 @@ class WordPieceTokenizer:
             token_id_list.extend(id_list)
             label_id_list.extend([label] * len(id_list))
             if padding and (self.max_sent_len is not None) and (len(token_id_list) > self.max_sent_len + 1):
-                token_id_list, label_id_list = self._truncate(token_id_list, label_id_list)
+                token_id_list, label_id_list = self._truncate(token_id_list[:self.max_sent_len + 2],
+                                                              label_id_list[:self.max_sent_len + 2])
                 break
-
-        if padding and (self.max_sent_len is not None) and (len(token_id_list) < self.max_sent_len + 1):
-            pad_len = self.max_sent_len + 1 - len(token_id_list)
-            token_id_list.extend([self.word2index[self.pad_token]] * pad_len)
-            label_id_list.extend([self.other_id] * pad_len)
 
         token_id_list.append(self.word2index[self.eos_token])
         label_id_list.append(self.other_id)
+        if padding and (self.max_sent_len is not None) and (len(token_id_list) < self.max_sent_len + 2):
+            pad_len = self.max_sent_len + 2 - len(token_id_list)
+            token_id_list.extend([self.word2index[self.pad_token]] * pad_len)
+            label_id_list.extend([self.other_id] * pad_len)
         return token_id_list, label_id_list
 
     def decode(self, token_id_list: List[int], label_list: List[int]):
