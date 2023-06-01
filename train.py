@@ -21,23 +21,29 @@ if __name__ == '__main__':
     train_dataset = XMLDataset(data_config["train_data_path"],
                                is_uncased=data_config["is_uncased"],
                                pretrained_tokenizer=data_config["pretrained_tokenizer_path"],
-                               max_length=data_config["max_token_number"])
+                               max_length=data_config["max_token_number"],
+                               eq_max_padding=data_config["eq_max_padding"])
     val_dataset = XMLDataset(data_config["validate_data_path"],
                              is_uncased=data_config["is_uncased"],
                              pretrained_tokenizer=data_config["pretrained_tokenizer_path"],
-                             max_length=data_config["max_token_number"])
+                             max_length=data_config["max_token_number"],
+                             eq_max_padding=data_config["eq_max_padding"])
     train_dataloader = DataLoader(train_dataset, shuffle=True,
-                                  batch_size=data_config["batch_size"])
+                                  batch_size=data_config["batch_size"],
+                                  collate_fn=train_dataset.get_collate_fn())
     val_dataloader = DataLoader(val_dataset, shuffle=False,
-                                batch_size=data_config["batch_size"])
+                                batch_size=data_config["batch_size"],
+                                collate_fn=val_dataset.get_collate_fn())
     # Pytorch lightning
     ner_model = PretrainedBertNER(pretrained_name=model_config["pretrained_model_path"],
                                   encoder_vocab_size=len(train_dataset.tokenizer.index2word),
                                   num_classes=len(train_dataset.index2label),
                                   lr=model_config["lr"],
                                   total_steps=model_config["epochs"] * len(train_dataloader),
+                                  adaptation_epochs=model_config["adaptation_epochs"],
                                   div_factor=model_config["div_factor"],
-                                  other_index=train_dataset.label2index[data_config["other_label"]])
+                                  other_index=train_dataset.label2index[data_config["other_label"]],
+                                  pad_index=train_dataset.label2index[train_dataset.pad_label])
     print(ner_model)
     ner_checkpoint_callback = ModelCheckpoint(filename='best-{epoch}', monitor='val_recall', mode='max', save_top_k=1)
     trainer_args = {

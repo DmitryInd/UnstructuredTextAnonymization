@@ -50,17 +50,20 @@ LABEL_MEMBERSHIP = [
 
 class XMLDataset(Dataset):
     def __init__(self, path_to_folder: str, xml_type="2006", anonymization=None,
-                 label_aliases: List[Tuple[str, List[str]]] = None,
-                 is_uncased=False, pretrained_tokenizer: str = None, max_length=100,
+                 label_aliases: List[Tuple[str, List[str]]] = None, other_label='O',
+                 is_uncased=False, pretrained_tokenizer: str = None, max_length=100, eq_max_padding=True,
                  device="cuda:0"):
         """
         :param path_to_folder: путь к директории с xml файлами, содержащими размеченные данные
         :param xml_type: тип набора данных, который будет считываться
         :param anonymization: класс для обезличивания защищённых данных (None -> без обезличивания)
         :param label_aliases: упорядоченный список пар меток и их возможных псевдонимов
+        :param other_label: метка для незащищаемой сущности
         :param is_uncased: приводить все символы к нижнему регистру или нет
         :param pretrained_tokenizer: путь к сохранённым параметрам токенизатора
         :param max_length: максимальное количество токенов в примере
+        :param eq_max_padding: паддинг до максимальной указанной длины для всех примеров или
+                               паддинг до самого длинного примера в батче
         :param device: устройство, на котором будет исполняться запрос
         """
         path = Path(path_to_folder)
@@ -72,16 +75,20 @@ class XMLDataset(Dataset):
         for standard, variants in label_aliases:
             for variant in variants:
                 self.alias2label[variant] = standard
-        self.index2label = list(list(zip(*label_aliases))[0])
+        self.other_label = other_label
+        self.pad_label = "[PAD]"
+        self.index2label = list(list(zip(*label_aliases))[0]) + [self.pad_label]
         self.label2index = {label: i for i, label in enumerate(self.index2label)}
         # Start of reading files
         self.anonymization = anonymization if anonymization is not None else lambda _1, _2, x: x
         self.is_uncased = is_uncased
+        self.eq_max_padding = eq_max_padding
         self._record_ids = []
         tokenized_source_list = []
         tokenized_target_list = []
         for xml_file in path.glob("*.xml"):
             read_xml = None
+            # TODO разбить на основной класс и потомков для разных датасетов
             if xml_type == "2006":
                 read_xml = self._read_2006_xml
             ids_batch, source_batch, target_batch = read_xml(str(xml_file))
@@ -91,10 +98,8 @@ class XMLDataset(Dataset):
                 tokenized_target_list.append([self.label2index[label] for label in labels])
         # Data tokenization
         self.tokenizer = WordPieceTokenizer(tokenized_source_list,
-                                            self.label2index['O'],
-                                            True,
-                                            max_sent_len=max_length,
-                                            pretrained_name=pretrained_tokenizer)
+                                            self.label2index[self.pad_label], pad_flag=eq_max_padding,
+                                            max_sent_len=max_length, pretrained_name=pretrained_tokenizer)
         tokenized = [self.tokenizer(s, t) for s, t in zip(tokenized_source_list, tokenized_target_list)]
         self._tokenized_source_list, self._tokenized_target_list = map(list, zip(*tokenized))
         self.record2idx = {record_id: i for i, record_id in enumerate(self._record_ids)}
@@ -115,20 +120,20 @@ class XMLDataset(Dataset):
             text = record.find('TEXT')
             for child in text.iter():
                 if child.tag == 'PHI':
-                    label = self.alias2label.get(child.get("TYPE"), 'O')
+                    label = self.alias2label.get(child.get("TYPE"), self.other_label)
                     source_words.append(self.anonymization(label, child.get("TYPE"), child.text))
                     target_labels.append(label)
                     if child.tail is not None:
                         source_words.append(child.tail)
-                        target_labels.append('O')
+                        target_labels.append(self.other_label)
                 elif child.tag == 'TEXT':
                     if child.text is not None:
                         source_words.append(child.text)
-                        target_labels.append('O')
+                        target_labels.append(self.other_label)
                 elif child.text is not None or child.tail is not None:
                     source_words.append((child.text if child.text is not None else '') + ' ' +
                                         (child.tail if child.tail is not None else ''))
-                    target_labels.append('O')
+                    target_labels.append(self.other_label)
 
             if self.is_uncased:
                 source_words = [s_part.lower() for s_part in source_words]
@@ -146,3 +151,25 @@ class XMLDataset(Dataset):
         target_ids = torch.tensor(self._tokenized_target_list[idx], device=self.device)
 
         return self._record_ids[idx], source_ids, target_ids
+
+    def get_collate_fn(self):
+        if self.eq_max_padding:
+            return None
+        token_pad_id = self.tokenizer.word2index[self.tokenizer.pad_token]
+        label_pad_id = self.label2index[self.pad_label]
+
+        def collate_fn(sample_list):
+            max_len = max(map(len, list(zip(*sample_list))[1]))
+            record_ids, batch_token_ids, batch_label_ids = [], [], []
+            for record_id, token_ids, label_ids in sample_list:
+                record_ids.append(record_id.unsqueeze(0))
+                filler = torch.ones(max_len - len(token_ids), dtype=torch.long, device=self.device)
+                batch_token_ids.append(
+                    torch.cat((token_ids, filler * token_pad_id)).unsqueeze(0)
+                )
+                batch_label_ids.append(
+                    torch.cat((label_ids, filler * label_pad_id)).unsqueeze(0)
+                )
+            return torch.cat(record_ids), torch.cat(batch_token_ids), torch.cat(batch_label_ids)
+
+        return collate_fn

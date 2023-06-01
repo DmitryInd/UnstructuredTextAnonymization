@@ -36,7 +36,8 @@ if __name__ == '__main__':
                               anonymization=anonymization,
                               is_uncased=data_config["is_uncased"],
                               pretrained_tokenizer=data_config["pretrained_tokenizer_path"],
-                              max_length=data_config["max_token_number"])
+                              max_length=data_config["max_token_number"],
+                              eq_max_padding=data_config["eq_max_padding"])
     test_dataloader = DataLoader(test_dataset, shuffle=False,
                                  batch_size=data_config["batch_size"])
     # Getting path to the last checkpoint

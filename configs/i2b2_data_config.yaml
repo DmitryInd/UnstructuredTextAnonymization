@@ -6,4 +6,5 @@ other_label: "O"
 is_uncased: False
 pretrained_tokenizer_path: "bert-base-cased"
 max_token_number: 100
+eq_max_padding: False
 batch_size: 32

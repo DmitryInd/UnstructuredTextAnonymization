@@ -10,17 +10,17 @@ from transformers import BertTokenizer, PreTrainedTokenizer
 
 
 class WordPieceTokenizer:
-    def __init__(self, sentence_list: List[List[str]], other_id: int, pad_flag: bool,
+    def __init__(self, sentence_list: List[List[str]], pad_id: int, pad_flag: bool,
                  max_sent_len: int = None, pretrained_name: str = None):
         """
         :param sentence_list: список предложений для обучения, разбитых на размеченные части
-        :param other_id: id класса 'other'
-        :param pad_flag: нужно ли приводить последовательности токенов к одной длине
+        :param pad_id: id класса 'other'
+        :param pad_flag: нужно ли дополнять последовательности токенов до максимальной длины
         :param max_sent_len: максимальная допустимая длина предложений в токенах (+2)
         :param pretrained_name: путь до сохранённых параметров или название токенизатора
         """
         # Initialisation
-        self.other_id = other_id
+        self.pad_id = pad_id
         self.max_sent_len = max_sent_len
         self.pad_flag = pad_flag
         if pretrained_name is None or Path(pretrained_name).exists():
@@ -41,7 +41,7 @@ class WordPieceTokenizer:
         :return: последовательность id текстовых токенов и последовательность целевых меток (для одного предложения)
         """
         token_id_list = [self.word2index[self.sos_token]]
-        label_id_list = [self.other_id]
+        label_id_list = [self.pad_id]
         padding = self.pad_flag if force_padding is None else force_padding
         for sentence_part, label in zip(sentence_parts, labels):
             if self._downloaded:
@@ -50,17 +50,17 @@ class WordPieceTokenizer:
                 id_list = self._tokenizer.encode(sentence_parts).ids
             token_id_list.extend(id_list)
             label_id_list.extend([label] * len(id_list))
-            if padding and (self.max_sent_len is not None) and (len(token_id_list) > self.max_sent_len + 1):
+            if (self.max_sent_len is not None) and (len(token_id_list) > self.max_sent_len + 1):
                 token_id_list, label_id_list = self._truncate(token_id_list[:self.max_sent_len + 2],
                                                               label_id_list[:self.max_sent_len + 2])
                 break
 
         token_id_list.append(self.word2index[self.eos_token])
-        label_id_list.append(self.other_id)
+        label_id_list.append(self.pad_id)
         if padding and (self.max_sent_len is not None) and (len(token_id_list) < self.max_sent_len + 2):
             pad_len = self.max_sent_len + 2 - len(token_id_list)
             token_id_list.extend([self.word2index[self.pad_token]] * pad_len)
-            label_id_list.extend([self.other_id] * pad_len)
+            label_id_list.extend([self.pad_id] * pad_len)
         return token_id_list, label_id_list
 
     def decode(self, token_id_list: List[int], label_list: List[int]):

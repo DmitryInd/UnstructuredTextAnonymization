@@ -6,29 +6,48 @@ from transformers import BertModel
 
 
 class PretrainedBertNER(pl.LightningModule):
-    def __init__(self, pretrained_name: str, encoder_vocab_size: int, num_classes: int,
-                 lr: float, total_steps: int, div_factor: int, other_index: int):
+    def __init__(self, pretrained_name: str, encoder_vocab_size: int,
+                 lr: float, total_steps: int, adaptation_epochs: int, div_factor: int,
+                 num_classes: int, other_index: int, pad_index: int):
+        """
+        :param pretrained_name: название предобученного BERT из hugging face hub
+        :param encoder_vocab_size: итоговый размер словаря (с добавлением или удалением части токенов)
+        :param lr: максимальный learning rate
+        :param total_steps: полное количество шагов обучения: ~ кол-во эпох * размер батча
+        :param adaptation_epochs: количество эпох для адаптации новых весов к замороженным предобученным пар-рам
+        :param div_factor: максимальный делитель, на который уменьшается learning rate в OneCycle подходе
+        :param num_classes: количество предсказываемых классов
+        :param other_index: индекс метки обычного слова, правильная классификация которого не столь важна
+        :param pad_index: индекс метки pad токена, которая не должна учитываться
+        """
         super().__init__()
-        # TODO Адаптацию весов
         self.save_hyperparameters()
         self.model = BertModel.from_pretrained(pretrained_name)
-        self.activation = nn.ReLU()
-        self.head = nn.Linear(self.model.config.hidden_size, num_classes)
+        self.head = nn.Sequential(
+            nn.Linear(self.model.config.hidden_size, self.model.config.hidden_size//2),
+            nn.ReLU(),
+            nn.Linear(self.model.config.hidden_size//2, num_classes)
+        )
+        self.other_index = other_index
+        self.pad_index = pad_index
         # Expanding or reducing the space of the encoder embeddings
         self.model.resize_token_embeddings(encoder_vocab_size)
         # Parameters of optimization
-        self.criterion = nn.CrossEntropyLoss(reduction='mean')
+        self.criterion = nn.CrossEntropyLoss(reduction='mean', ignore_index=pad_index)
         self.lr = lr
         self.div_factor = div_factor
         self.total_steps = total_steps
+        self.adaptation_epochs = adaptation_epochs
         # Metrics
-        self.recall = Recall(task="multiclass", num_classes=num_classes, ignore_index=other_index)
-        self.precision = Precision(task="multiclass", num_classes=num_classes)
-        self.f1_score = F1Score(task="multiclass", num_classes=num_classes)
+        self.train_recall = Recall(task="multiclass", num_classes=num_classes, ignore_index=pad_index)
+        self.train_precision = Precision(task="multiclass", num_classes=num_classes, ignore_index=pad_index)
+        self.train_f1_score = F1Score(task="multiclass", num_classes=num_classes, ignore_index=pad_index)
+        self.val_recall = Recall(task="multiclass", num_classes=num_classes, ignore_index=pad_index)
+        self.val_precision = Precision(task="multiclass", num_classes=num_classes, ignore_index=pad_index)
+        self.val_f1_score = F1Score(task="multiclass", num_classes=num_classes, ignore_index=pad_index)
 
     def forward(self, x):
         x = self.model(x).last_hidden_state
-        x = self.activation(x)
         x = self.head(x)  # B, L, C
         return x
 
@@ -45,38 +64,49 @@ class PretrainedBertNER(pl.LightningModule):
         return [optimizer], [scheduler]
 
     def training_step(self, batch, batch_idx):
-        _, x, y = batch
+        _, x, y = batch  # X: B, L
+        if self.current_epoch < self.adaptation_epochs:
+            self.freeze_params(self.model)  # Adaptation of new parameters to pretrained
+        else:
+            self.freeze_params(self.model, reverse=True)
         predictions = self(x).transpose(2, 1)  # B, L, C -> B, C, L
         loss = self.criterion(predictions, y)
         hard_pred = torch.argmax(predictions, dim=-2)
-        self.recall(hard_pred, y)
-        self.precision(hard_pred, y)
-        self.f1_score(hard_pred, y)
+        self.train_recall(hard_pred, y)  # TODO сделать замену other index на pad index для метрики recall
+        self.train_precision(hard_pred, y)
+        self.train_f1_score(hard_pred, y)
         self.log('train_loss', loss.item(), on_step=False, on_epoch=True, logger=True)
-        self.log('train_recall', self.recall, on_step=False, on_epoch=True, logger=True)
-        self.log('train_precision', self.precision, on_step=False, on_epoch=True, logger=True)
-        self.log('train_f1', self.f1_score, on_step=False, on_epoch=True, logger=True)
+        self.log('train_recall', self.train_recall, on_step=False, on_epoch=True, logger=True, prog_bar=True)
+        self.log('train_precision', self.train_precision, on_step=False, on_epoch=True, logger=True)
+        self.log('train_f1', self.train_f1_score, on_step=False, on_epoch=True, logger=True)
         return loss
 
+    @torch.no_grad()
     def validation_step(self, batch, batch_idx):
         _, x, y = batch
         predictions = self(x).transpose(2, 1)  # B, L, C -> B, C, L
         loss = self.criterion(predictions, y)
         hard_pred = torch.argmax(predictions, dim=-2)
-        self.recall(hard_pred, y)
-        self.precision(hard_pred, y)
-        self.f1_score(hard_pred, y)
-        self.log('val_loss', loss, on_epoch=True, prog_bar=True, logger=True)
-        self.log('val_recall', self.recall, on_step=False, on_epoch=True, logger=True)
-        self.log('val_precision', self.precision, on_step=False, on_epoch=True, logger=True)
-        self.log('val_f1', self.f1_score, on_step=False, on_epoch=True, logger=True)
+        self.val_recall(hard_pred, y)
+        self.val_precision(hard_pred, y)
+        self.val_f1_score(hard_pred, y)
+        self.log('val_loss', loss, on_step=False, on_epoch=True, logger=True)
+        self.log('val_recall', self.val_recall, on_step=False, on_epoch=True, logger=True, prog_bar=True)
+        self.log('val_precision', self.val_precision, on_step=False, on_epoch=True, logger=True)
+        self.log('val_f1', self.val_f1_score, on_step=False, on_epoch=True, logger=True)
 
+    @torch.no_grad()
     def test_step(self, batch, batch_idx):
         _, x, y = batch
         hard_pred = torch.argmax(self(x).transpose(2, 1), dim=-2)
-        self.recall(hard_pred, y)
-        self.precision(hard_pred, y)
-        self.f1_score(hard_pred, y)
-        self.log('test_recall', self.recall, on_step=False, on_epoch=True, logger=True)
-        self.log('test_precision', self.precision, on_step=False, on_epoch=True, logger=True)
-        self.log('test_f1', self.f1_score, on_step=False, on_epoch=True, logger=True)
+        self.val_recall(hard_pred, y)
+        self.val_precision(hard_pred, y)
+        self.val_f1_score(hard_pred, y)
+        self.log('test_recall', self.val_recall, on_step=False, on_epoch=True, logger=True)
+        self.log('test_precision', self.val_precision, on_step=False, on_epoch=True, logger=True)
+        self.log('test_f1', self.val_f1_score, on_step=False, on_epoch=True, logger=True)
+
+    @staticmethod
+    def freeze_params(model: nn.Module, reverse=False):
+        for param in model.parameters():
+            param.requires_grad = reverse
