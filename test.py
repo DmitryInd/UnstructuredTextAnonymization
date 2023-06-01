@@ -38,12 +38,13 @@ if __name__ == '__main__':
                               pretrained_tokenizer=data_config["pretrained_tokenizer_path"],
                               max_length=data_config["max_token_number"])
     test_dataloader = DataLoader(test_dataset, shuffle=False,
-                                 batch_size=data_config["batch_size"], drop_last=True)
+                                 batch_size=data_config["batch_size"])
     # Getting path to the last checkpoint
     t_reader = TensorBoardReader(Path(model_config["log_dir"]) / Path("lightning_logs"))
     path_to_checkpoint = t_reader.get_ckpt_path()
     # Pytorch lightning
     ner_model = PretrainedBertNER.load_from_checkpoint(path_to_checkpoint)
+    print(ner_model)
     trainer_args = {
         "accelerator": "gpu",
         "logger": False

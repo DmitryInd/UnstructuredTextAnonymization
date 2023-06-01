@@ -54,7 +54,10 @@ class Statistics:
         return list(sorted(list(faults)))
 
     def get_classification_report(self):
-        return classification_report(self.true_labels, self.predicted_labels)
+        return classification_report(self.true_labels,
+                                     self.predicted_labels,
+                                     target_names=self.index2label,
+                                     digits=4)
 
     @staticmethod
     def _get_rgb_cell_map(float_cell_map: np.ndarray):
@@ -83,6 +86,7 @@ class Statistics:
     @torch.no_grad()
     def print_random_failed_predictions(self, num_samples: int = 5):
         internal_ids = np.random.choice(np.arange(0, len(self.fault_ids)), num_samples, replace=False)
+        print('Wrongly predicted examples:')
         for i in internal_ids:
             record_id = self.fault_ids[i]
             idx = self.record2idx[record_id]
@@ -91,7 +95,6 @@ class Statistics:
             token_ids, label_ids, pred_ids = token_ids.tolist(), label_ids.tolist(), pred_ids.tolist()
             sentence, true_label_ids = self.tokenizer.decode(token_ids, label_ids)
             _, pred_label_ids = self.tokenizer.decode(token_ids, pred_ids)
-            print('Wrongly predicted examples:')
             print('_'*5 + f' Record {record_id} ' + '_'*5)
             print(tabulate([['Sentence:'] + sentence,
                             ['True labels:'] + [self.index2label[index] for index in true_label_ids],

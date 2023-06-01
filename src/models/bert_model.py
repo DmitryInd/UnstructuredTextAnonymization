@@ -9,6 +9,7 @@ class PretrainedBertNER(pl.LightningModule):
     def __init__(self, pretrained_name: str, encoder_vocab_size: int, num_classes: int,
                  lr: float, total_steps: int, div_factor: int, other_index: int):
         super().__init__()
+        # TODO Адаптацию весов
         self.save_hyperparameters()
         self.model = BertModel.from_pretrained(pretrained_name)
         self.activation = nn.ReLU()
@@ -48,13 +49,13 @@ class PretrainedBertNER(pl.LightningModule):
         predictions = self(x).transpose(2, 1)  # B, L, C -> B, C, L
         loss = self.criterion(predictions, y)
         hard_pred = torch.argmax(predictions, dim=-2)
-        recall = self.recall(hard_pred, y)
-        precision = self.precision(hard_pred, y)
-        f1 = self.f1_score(hard_pred, y)
+        self.recall(hard_pred, y)
+        self.precision(hard_pred, y)
+        self.f1_score(hard_pred, y)
         self.log('train_loss', loss.item(), on_step=False, on_epoch=True, logger=True)
-        self.log('train_recall', recall, on_step=False, on_epoch=True, logger=True)
-        self.log('train_precision', precision, on_step=False, on_epoch=True, logger=True)
-        self.log('train_f1', f1, on_step=False, on_epoch=True, logger=True)
+        self.log('train_recall', self.recall, on_step=False, on_epoch=True, logger=True)
+        self.log('train_precision', self.precision, on_step=False, on_epoch=True, logger=True)
+        self.log('train_f1', self.f1_score, on_step=False, on_epoch=True, logger=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -62,20 +63,20 @@ class PretrainedBertNER(pl.LightningModule):
         predictions = self(x).transpose(2, 1)  # B, L, C -> B, C, L
         loss = self.criterion(predictions, y)
         hard_pred = torch.argmax(predictions, dim=-2)
-        recall = self.recall(hard_pred, y)
-        precision = self.precision(hard_pred, y)
-        f1 = self.f1_score(hard_pred, y)
+        self.recall(hard_pred, y)
+        self.precision(hard_pred, y)
+        self.f1_score(hard_pred, y)
         self.log('val_loss', loss, on_epoch=True, prog_bar=True, logger=True)
-        self.log('val_recall', recall, on_step=False, on_epoch=True, logger=True)
-        self.log('val_precision', precision, on_step=False, on_epoch=True, logger=True)
-        self.log('val_f1', f1, on_step=False, on_epoch=True, logger=True)
+        self.log('val_recall', self.recall, on_step=False, on_epoch=True, logger=True)
+        self.log('val_precision', self.precision, on_step=False, on_epoch=True, logger=True)
+        self.log('val_f1', self.f1_score, on_step=False, on_epoch=True, logger=True)
 
     def test_step(self, batch, batch_idx):
         _, x, y = batch
         hard_pred = torch.argmax(self(x).transpose(2, 1), dim=-2)
-        recall = self.recall(hard_pred, y)
-        precision = self.precision(hard_pred, y)
-        f1 = self.f1_score(hard_pred, y)
-        self.log('test_recall', recall, on_step=False, on_epoch=True, logger=True)
-        self.log('test_precision', precision, on_step=False, on_epoch=True, logger=True)
-        self.log('test_f1', f1, on_step=False, on_epoch=True, logger=True)
+        self.recall(hard_pred, y)
+        self.precision(hard_pred, y)
+        self.f1_score(hard_pred, y)
+        self.log('test_recall', self.recall, on_step=False, on_epoch=True, logger=True)
+        self.log('test_precision', self.precision, on_step=False, on_epoch=True, logger=True)
+        self.log('test_f1', self.f1_score, on_step=False, on_epoch=True, logger=True)

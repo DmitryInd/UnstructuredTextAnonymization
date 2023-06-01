@@ -29,7 +29,7 @@ if __name__ == '__main__':
     train_dataloader = DataLoader(train_dataset, shuffle=True,
                                   batch_size=data_config["batch_size"])
     val_dataloader = DataLoader(val_dataset, shuffle=False,
-                                batch_size=data_config["batch_size"], drop_last=True)
+                                batch_size=data_config["batch_size"])
     # Pytorch lightning
     ner_model = PretrainedBertNER(pretrained_name=model_config["pretrained_model_path"],
                                   encoder_vocab_size=len(train_dataset.tokenizer.index2word),
@@ -38,6 +38,7 @@ if __name__ == '__main__':
                                   total_steps=model_config["epochs"] * len(train_dataloader),
                                   div_factor=model_config["div_factor"],
                                   other_index=train_dataset.label2index[data_config["other_label"]])
+    print(ner_model)
     ner_checkpoint_callback = ModelCheckpoint(filename='best-{epoch}', monitor='val_recall', mode='max', save_top_k=1)
     trainer_args = {
         "accelerator": "gpu",
