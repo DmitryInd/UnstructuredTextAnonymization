@@ -72,7 +72,7 @@ class PretrainedBertNER(pl.LightningModule):
         predictions = self(x).transpose(2, 1)  # B, L, C -> B, C, L
         loss = self.criterion(predictions, y)
         hard_pred = torch.argmax(predictions, dim=-2)
-        self.train_recall(hard_pred, y)  # TODO сделать замену other index на pad index для метрики recall
+        self.train_recall(hard_pred, y.where(y != self.other_index, self.pad_index))
         self.train_precision(hard_pred, y)
         self.train_f1_score(hard_pred, y)
         self.log('train_loss', loss.item(), on_step=False, on_epoch=True, logger=True)
@@ -87,7 +87,7 @@ class PretrainedBertNER(pl.LightningModule):
         predictions = self(x).transpose(2, 1)  # B, L, C -> B, C, L
         loss = self.criterion(predictions, y)
         hard_pred = torch.argmax(predictions, dim=-2)
-        self.val_recall(hard_pred, y)
+        self.val_recall(hard_pred, y.where(y != self.other_index, self.pad_index))
         self.val_precision(hard_pred, y)
         self.val_f1_score(hard_pred, y)
         self.log('val_loss', loss, on_step=False, on_epoch=True, logger=True)
@@ -99,7 +99,7 @@ class PretrainedBertNER(pl.LightningModule):
     def test_step(self, batch, batch_idx):
         _, x, y = batch
         hard_pred = torch.argmax(self(x).transpose(2, 1), dim=-2)
-        self.val_recall(hard_pred, y)
+        self.val_recall(hard_pred, y.where(y != self.other_index, self.pad_index))
         self.val_precision(hard_pred, y)
         self.val_f1_score(hard_pred, y)
         self.log('test_recall', self.val_recall, on_step=False, on_epoch=True, logger=True)

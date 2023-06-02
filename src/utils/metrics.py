@@ -19,6 +19,7 @@ class Statistics:
         self.tokenizer = self.dataset.tokenizer
         self.record2idx = self.dataset.record2idx
         self.index2label = self.dataset.index2label
+        self.pad_index = self.dataset.label2index[self.dataset.pad_label]
         self.record_ids, self.true_labels, self.predicted_labels = self._compute_true_and_predicted_labels()
         self.confusion_matrix = self._compute_confusion_matrix()
         self.fault_ids = self._get_fault_record_ids()
@@ -48,15 +49,22 @@ class Statistics:
     def _get_fault_record_ids(self):
         faults = set()
         for record_id, true_label, pred_label in zip(self.record_ids, self.true_labels, self.predicted_labels):
-            if true_label != pred_label:
+            if true_label != pred_label and true_label != self.pad_index:
                 faults.add(record_id)
 
         return list(sorted(list(faults)))
 
     def get_classification_report(self):
+        # Exclude pad index
+        target_names, labels = [], []
+        for i, name in enumerate(self.index2label):
+            if i != self.pad_index:
+                target_names.append(name)
+                labels.append(i)
         return classification_report(self.true_labels,
                                      self.predicted_labels,
-                                     target_names=self.index2label,
+                                     labels=labels,
+                                     target_names=target_names,
                                      digits=4)
 
     @staticmethod

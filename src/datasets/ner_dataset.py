@@ -164,12 +164,8 @@ class XMLDataset(Dataset):
             for record_id, token_ids, label_ids in sample_list:
                 record_ids.append(record_id.unsqueeze(0))
                 filler = torch.ones(max_len - len(token_ids), dtype=torch.long, device=self.device)
-                batch_token_ids.append(
-                    torch.cat((token_ids, filler * token_pad_id)).unsqueeze(0)
-                )
-                batch_label_ids.append(
-                    torch.cat((label_ids, filler * label_pad_id)).unsqueeze(0)
-                )
+                batch_token_ids.append(torch.cat((token_ids, filler * token_pad_id)).unsqueeze(0))
+                batch_label_ids.append(torch.cat((label_ids, filler * label_pad_id)).unsqueeze(0))
             return torch.cat(record_ids), torch.cat(batch_token_ids), torch.cat(batch_label_ids)
 
         return collate_fn

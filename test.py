@@ -39,7 +39,8 @@ if __name__ == '__main__':
                               max_length=data_config["max_token_number"],
                               eq_max_padding=data_config["eq_max_padding"])
     test_dataloader = DataLoader(test_dataset, shuffle=False,
-                                 batch_size=data_config["batch_size"])
+                                 batch_size=data_config["batch_size"],
+                                 collate_fn=test_dataset.get_collate_fn())
     # Getting path to the last checkpoint
     t_reader = TensorBoardReader(Path(model_config["log_dir"]) / Path("lightning_logs"))
     path_to_checkpoint = t_reader.get_ckpt_path()
