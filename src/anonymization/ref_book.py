@@ -53,10 +53,10 @@ class ReferenceBookAnonymization:
                 deid_entity = self.generate_random_id(10)
             elif specific_category == "PHONE" or specific_category == "CONTACT":
                 deid_entity = self.generate_phone_number()
-            elif specific_category == "EMAIL" or specific_category == "URL":
+            elif specific_category == "EMAIL":
                 deid_entity = self.generate_email()
-                if specific_category == "URL":
-                    deid_entity = "www." + deid_entity
+            elif specific_category == "URL":
+                deid_entity = self.generate_url()
             elif specific_category == "IPADDR" or specific_category == "IPADDRESS":
                 deid_entity = self.generate_random_ip()
         elif general_category == 'LOCATION':
@@ -88,7 +88,7 @@ class ReferenceBookAnonymization:
 
     @staticmethod
     def generate_age(is_more_89: bool):
-        return np.random.randint(0, 90) if is_more_89 else np.random.randint(90, 120)
+        return np.random.randint(0, 90) if not is_more_89 else np.random.randint(90, 120)
 
     @staticmethod
     def generate_date(date_format=None, with_year=False):
@@ -147,3 +147,22 @@ class ReferenceBookAnonymization:
         last = last.split()[0].lower()
         domain = ''.join(*np.random.choice(string.ascii_lowercase, np.random.randint(2, 6)))
         return "{}.{}@{}.com".format(first, last, domain)
+
+    def generate_url(self):
+        connection_prefix = np.random.randint(0, 2)
+        is_www = np.random.randint(0, 1)
+        prefix = ""
+        if connection_prefix:
+            prefix += ["https://", "http://"][connection_prefix - 1]
+        if is_www:
+            prefix += "www"
+        is_male = np.random.randint(0, 1)
+        if is_male:
+            first = np.random.choice(self.first_male_names)
+        else:
+            first = np.random.choice(self.first_femail_names)
+        last = np.random.choice(self.path_to_last_names)
+        first = first.split()[0].lower()
+        last = last.split()[0].lower()
+        domain = ''.join(*np.random.choice(string.ascii_lowercase, np.random.randint(2, 6)))
+        return "{}.{}.{}.{}.com".format(prefix, domain, first, last)
