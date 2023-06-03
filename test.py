@@ -7,7 +7,7 @@ from torch.utils.data import DataLoader
 from transformers import set_seed
 
 sys.path.insert(1, "./src")
-from datasets.ner_dataset import XMLDataset
+from datasets.ner_dataset import get_ner_dataset
 from models.bert_model import PretrainedBertNER
 from utils.metrics import Statistics
 from utils.log_reader import TensorBoardReader
@@ -31,13 +31,12 @@ if __name__ == '__main__':
                                                anon_config['path_to_organizations'],
                                                anon_config['path_to_hospitals'],
                                                anon_config['path_to_professions'])
-    test_dataset = XMLDataset(data_config["validate_data_path"],
-                              xml_type=data_config['val_xml_type'],
-                              anonymization=anonymization,
-                              is_uncased=data_config["is_uncased"],
-                              pretrained_tokenizer=data_config["pretrained_tokenizer_path"],
-                              max_length=data_config["max_token_number"],
-                              eq_max_padding=data_config["eq_max_padding"])
+    test_dataset = get_ner_dataset(data_type=data_config['val_data_type'],
+                                   path_to_folder=data_config["validate_data_path"], anonymization=anonymization,
+                                   is_uncased=data_config["is_uncased"],
+                                   pretrained_tokenizer=data_config["pretrained_tokenizer_path"],
+                                   max_length=data_config["max_token_number"],
+                                   eq_max_padding=data_config["eq_max_padding"])
     test_dataloader = DataLoader(test_dataset, shuffle=False,
                                  batch_size=data_config["batch_size"],
                                  collate_fn=test_dataset.get_collate_fn())

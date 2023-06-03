@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader
 from transformers import set_seed
 
 sys.path.insert(1, "./src")
-from datasets.ner_dataset import XMLDataset
+from datasets.ner_dataset import get_ner_dataset
 from models.bert_model import PretrainedBertNER
 from utils.log_reader import TensorBoardReader
 
@@ -18,16 +18,18 @@ if __name__ == '__main__':
     data_config = yaml.load(open("configs/i2b2_data_config.yaml", 'r'), Loader=yaml.Loader)
     model_config = yaml.load(open("configs/bert_model_config.yaml", 'r'), Loader=yaml.Loader)
     # Data processing
-    train_dataset = XMLDataset(data_config["train_data_path"],
-                               is_uncased=data_config["is_uncased"],
-                               pretrained_tokenizer=data_config["pretrained_tokenizer_path"],
-                               max_length=data_config["max_token_number"],
-                               eq_max_padding=data_config["eq_max_padding"])
-    val_dataset = XMLDataset(data_config["validate_data_path"],
-                             is_uncased=data_config["is_uncased"],
-                             pretrained_tokenizer=data_config["pretrained_tokenizer_path"],
-                             max_length=data_config["max_token_number"],
-                             eq_max_padding=data_config["eq_max_padding"])
+    train_dataset = get_ner_dataset(data_type=data_config["train_data_type"],
+                                    path_to_folder=data_config["train_data_path"],
+                                    is_uncased=data_config["is_uncased"],
+                                    pretrained_tokenizer=data_config["pretrained_tokenizer_path"],
+                                    max_length=data_config["max_token_number"],
+                                    eq_max_padding=data_config["eq_max_padding"])
+    val_dataset = get_ner_dataset(data_type=data_config["val_data_type"],
+                                  path_to_folder=data_config["validate_data_path"],
+                                  is_uncased=data_config["is_uncased"],
+                                  pretrained_tokenizer=data_config["pretrained_tokenizer_path"],
+                                  max_length=data_config["max_token_number"],
+                                  eq_max_padding=data_config["eq_max_padding"])
     train_dataloader = DataLoader(train_dataset, shuffle=True,
                                   batch_size=data_config["batch_size"],
                                   collate_fn=train_dataset.get_collate_fn())

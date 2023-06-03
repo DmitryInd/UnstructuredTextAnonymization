@@ -1,7 +1,7 @@
 train_data_path: "./data/token/train"
-train_xml_type: "2006"
+train_data_type: "2006"
 validate_data_path: "./data/token/test"
-val_xml_type: "2006"
+val_data_type: "2006"
 other_label: "O"
 is_uncased: False
 pretrained_tokenizer_path: "bert-base-cased"
