@@ -145,7 +145,8 @@ class ReferenceBookAnonymization:
         last = np.random.choice(self.path_to_last_names)
         first = first.split()[0].lower()
         last = last.split()[0].lower()
-        domain = ''.join(*np.random.choice(string.ascii_lowercase, np.random.randint(2, 6)))
+        indexes = np.random.randint(0, len(string.ascii_lowercase), np.random.randint(2, 6))
+        domain = ''.join([string.ascii_lowercase[i] for i in indexes])
         return "{}.{}@{}.com".format(first, last, domain)
 
     def generate_url(self):
@@ -164,5 +165,6 @@ class ReferenceBookAnonymization:
         last = np.random.choice(self.path_to_last_names)
         first = first.split()[0].lower()
         last = last.split()[0].lower()
-        domain = ''.join(*np.random.choice(string.ascii_lowercase, np.random.randint(2, 6)))
+        indexes = np.random.randint(0, len(string.ascii_lowercase), np.random.randint(2, 6))
+        domain = ''.join([string.ascii_lowercase[i] for i in indexes])
         return "{}.{}.{}.{}.com".format(prefix, domain, first, last)

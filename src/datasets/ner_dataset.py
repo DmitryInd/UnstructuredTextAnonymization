@@ -2,6 +2,7 @@ import xml.etree.ElementTree as ET
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Tuple, List
+import numpy as np
 
 import torch
 from torch.utils.data import Dataset
@@ -99,7 +100,7 @@ class NerDataset(Dataset, ABC):
         tokenized = [self.tokenizer(s, t) for s, t in zip(tokenized_source_list, tokenized_target_list)]
         self._tokenized_source_list, self._tokenized_target_list = map(list, zip(*tokenized))
         self.record2idx = {record_id: i for i, record_id in enumerate(self._record_ids)}
-        self._record_ids = torch.tensor(self._record_ids, device=device)
+        self._record_ids = np.array(self._record_ids)
         self.device = device
 
     @property
@@ -123,6 +124,7 @@ class NerDataset(Dataset, ABC):
     def get_collate_fn(self):
         if self.eq_max_padding:
             return None
+
         token_pad_id = self.tokenizer.word2index[self.tokenizer.pad_token]
         label_pad_id = self.label2index[self.pad_label]
 
@@ -130,42 +132,21 @@ class NerDataset(Dataset, ABC):
             max_len = max(map(len, list(zip(*sample_list))[1]))
             record_ids, batch_token_ids, batch_label_ids = [], [], []
             for record_id, token_ids, label_ids in sample_list:
-                record_ids.append(record_id.unsqueeze(0))
+                record_ids.append(np.expand_dims(record_id, 0))
                 filler = torch.ones(max_len - len(token_ids), dtype=torch.long, device=self.device)
                 batch_token_ids.append(torch.cat((token_ids, filler * token_pad_id)).unsqueeze(0))
                 batch_label_ids.append(torch.cat((label_ids, filler * label_pad_id)).unsqueeze(0))
-            return torch.cat(record_ids), torch.cat(batch_token_ids), torch.cat(batch_label_ids)
+            return np.concatenate(record_ids), torch.cat(batch_token_ids), torch.cat(batch_label_ids)
 
         return collate_fn
 
 
 class I2b2SixNerDataset(NerDataset):
-    def __init__(self, path_to_folder: str, anonymization=None,
-                 label_aliases: List[Tuple[str, List[str]]] = None, other_label='O',
-                 is_uncased=False, pretrained_tokenizer: str = None, max_length=100, eq_max_padding=True,
-                 device="cuda:0"):
-        """
-        :param path_to_folder: путь к директории с xml файлами, содержащими размеченные данные
-        :param anonymization: класс для обезличивания защищённых данных (None -> без обезличивания)
-        :param label_aliases: упорядоченный список пар меток и их возможных псевдонимов
-        :param other_label: метка для незащищаемой сущности
-        :param is_uncased: приводить все символы к нижнему регистру или нет
-        :param pretrained_tokenizer: путь к сохранённым параметрам токенизатора
-        :param max_length: максимальное количество токенов в примере
-        :param eq_max_padding: паддинг до максимальной указанной длины для всех примеров или
-                               паддинг до самого длинного примера в батче
-        :param device: устройство, на котором будет исполняться запрос
-        """
-        super().__init__(path_to_folder, anonymization,
-                         label_aliases, other_label,
-                         is_uncased, pretrained_tokenizer, max_length, eq_max_padding,
-                         device)
-
     @property
     def file_extension(self) -> str:
         return "xml"
 
-    def _read_file(self, path_to_file: str) -> Tuple[List[int], List[List[str]], List[List[str]]]:
+    def _read_file(self, path_to_file: str) -> Tuple[List[str], List[List[str]], List[List[str]]]:
         tree = ET.ElementTree(file=path_to_file)
         root = tree.getroot()
         records = root.findall('RECORD')
@@ -175,7 +156,7 @@ class I2b2SixNerDataset(NerDataset):
         for record in records:
             source_words = []
             target_labels = []
-            record_id = int(record.get('ID'))
+            record_id = record.get('ID')
             text = record.find('TEXT')
             for child in text.iter():
                 if child.tag == 'PHI':
@@ -203,7 +184,39 @@ class I2b2SixNerDataset(NerDataset):
         return record_ids, source_batch, target_batch
 
 
+class I2b2FourteenNerDataset(NerDataset):
+    @property
+    def file_extension(self) -> str:
+        return "xml"
+
+    def _read_file(self, path_to_file: str) -> Tuple[List[str], List[List[str]], List[List[str]]]:
+        tree = ET.ElementTree(file=path_to_file)
+        root = tree.getroot()
+        record_ids = [Path(path_to_file).stem]
+        source_words = []
+        target_labels = []
+        text = root.find('TEXT').text
+        tags = root.find('TAGS')
+        current_pos = 0
+        for child in tags:
+            start = int(child.get("start"))
+            if start > current_pos:
+                source_words.append(text[current_pos:start])
+                target_labels.append(self.other_label)
+            label = self.alias2label.get(child.get("TYPE"), self.other_label)
+            source_words.append(self.anonymization(label, child.get("TYPE"), child.get("text")))
+            target_labels.append(label)
+            current_pos = int(child.get("end"))
+        if current_pos < len(text):
+            source_words.append(text[current_pos:])
+            target_labels.append(self.other_label)
+
+        return record_ids, [source_words], [target_labels]
+
+
 def get_ner_dataset(data_type: str, *args, **kwargs) -> NerDataset | None:
     if data_type == "2006":
         return I2b2SixNerDataset(*args, **kwargs)
+    elif data_type == "2014":
+        return I2b2FourteenNerDataset(*args, **kwargs)
     return None

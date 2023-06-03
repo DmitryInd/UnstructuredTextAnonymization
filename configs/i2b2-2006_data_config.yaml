@@ -1,10 +1,10 @@
-train_data_path: "./data/token/train"
+train_data_path: "./data/token/i2b2-2006/train"
 train_data_type: "2006"
-validate_data_path: "./data/token/test"
+validate_data_path: "./data/token/i2b2-2006/test"
 val_data_type: "2006"
 other_label: "O"
 is_uncased: False
 pretrained_tokenizer_path: "bert-base-cased"
 max_token_number: 100
-eq_max_padding: False
+eq_max_padding: True
 batch_size: 32

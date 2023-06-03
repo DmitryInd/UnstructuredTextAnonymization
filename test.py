@@ -17,7 +17,7 @@ if __name__ == '__main__':
     set_seed(42)
     # Config initialisation
     anon_config = yaml.load(open("configs/ref_book_anonymization_config.yaml", 'r'), Loader=yaml.Loader)
-    data_config = yaml.load(open("configs/i2b2_data_config.yaml", 'r'), Loader=yaml.Loader)
+    data_config = yaml.load(open("configs/i2b2-2014_data_config.yaml", 'r'), Loader=yaml.Loader)
     model_config = yaml.load(open("configs/bert_model_config.yaml", 'r'), Loader=yaml.Loader)
     # Data processing
     anonymization = ReferenceBookAnonymization(anon_config['path_to_first_male_names'],

@@ -15,7 +15,7 @@ from utils.log_reader import TensorBoardReader
 if __name__ == '__main__':
     set_seed(42)
     # Config initialisation
-    data_config = yaml.load(open("configs/i2b2_data_config.yaml", 'r'), Loader=yaml.Loader)
+    data_config = yaml.load(open("configs/i2b2-2014_data_config.yaml", 'r'), Loader=yaml.Loader)
     model_config = yaml.load(open("configs/bert_model_config.yaml", 'r'), Loader=yaml.Loader)
     # Data processing
     train_dataset = get_ner_dataset(data_type=data_config["train_data_type"],

@@ -1,0 +1,10 @@
+train_data_path: "./data/token/i2b2-2014/train"
+train_data_type: "2014"
+validate_data_path: "./data/token/i2b2-2014/test"
+val_data_type: "2014"
+other_label: "O"
+is_uncased: False
+pretrained_tokenizer_path: "bert-base-cased"
+max_token_number: 100
+eq_max_padding: False
+batch_size: 32

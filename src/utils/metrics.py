@@ -65,14 +65,15 @@ class Statistics:
                                      self.predicted_labels,
                                      labels=labels,
                                      target_names=target_names,
-                                     digits=4)
+                                     digits=4,
+                                     zero_division=0)
 
     @staticmethod
     def _get_rgb_cell_map(float_cell_map: np.ndarray):
         assert len(float_cell_map.shape) == 2, "Confusion matrix has more than two dimensions"
         cmap = plt.cm.get_cmap('Greens')
         max_values = np.sum(float_cell_map, axis=1)
-        rgb_cell_map = [[cmap(cell / max_value) for cell in row] for row, max_value in zip(float_cell_map, max_values)]
+        rgb_cell_map = [[cmap(cell / (max_value + 1e-5)) for cell in row] for row, max_value in zip(float_cell_map, max_values)]
         return rgb_cell_map
 
     def plot_confusion_matrix(self):
