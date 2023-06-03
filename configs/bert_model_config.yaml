@@ -1,6 +1,0 @@
-pretrained_model_path: "bert-base-cased"
-lr: 0.0001
-epochs: 20
-adaptation_epochs: 5
-div_factor: 10000
-log_dir: "./bert-cased"

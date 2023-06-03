@@ -1,0 +1,6 @@
+pretrained_model_path: "bert-base-uncased" # "bert-base-cased" / "bert-base-uncased"
+lr: 0.0001
+epochs: 20
+adaptation_epochs: 5
+div_factor: 10000
+log_dir: "./bert-base"

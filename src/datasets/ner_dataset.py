@@ -204,7 +204,8 @@ class I2b2FourteenNerDataset(NerDataset):
                 source_words.append(text[current_pos:start])
                 target_labels.append(self.other_label)
             label = self.alias2label.get(child.get("TYPE"), self.other_label)
-            source_words.append(self.anonymization(label, child.get("TYPE"), child.get("text")))
+            source_words.append(self.anonymization(label, self._phi_type_conversion(child.get("TYPE")),
+                                                   child.get("text")))
             target_labels.append(label)
             current_pos = int(child.get("end"))
         if current_pos < len(text):
@@ -212,6 +213,12 @@ class I2b2FourteenNerDataset(NerDataset):
             target_labels.append(self.other_label)
 
         return record_ids, [source_words], [target_labels]
+
+    @staticmethod
+    def _phi_type_conversion(phi_type):
+        if phi_type == "DATE":
+            phi_type = "DATEYEAR"
+        return phi_type
 
 
 def get_ner_dataset(data_type: str, *args, **kwargs) -> NerDataset | None:
