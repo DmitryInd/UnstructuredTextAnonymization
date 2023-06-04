@@ -53,7 +53,8 @@ LABEL_MEMBERSHIP = [
 class NerDataset(Dataset, ABC):
     def __init__(self, path_to_folder: str, anonymization=None,
                  label_aliases: List[Tuple[str, List[str]]] = None, other_label='O',
-                 is_uncased=False, pretrained_tokenizer: str = None, max_length=100, eq_max_padding=True,
+                 is_uncased=False, pretrained_tokenizer: str = None,
+                 max_length=100, overlap=40, eq_max_padding=True,
                  device="cuda:0"):
         """
         :param path_to_folder: путь к директории с xml файлами, содержащими размеченные данные
@@ -63,6 +64,7 @@ class NerDataset(Dataset, ABC):
         :param is_uncased: приводить все символы к нижнему регистру или нет
         :param pretrained_tokenizer: путь к сохранённым параметрам токенизатора
         :param max_length: максимальное количество токенов в примере
+        :param overlap: пересечение последовательных частей предложений
         :param eq_max_padding: паддинг до максимальной указанной длины для всех примеров или
                                паддинг до самого длинного примера в батче
         :param device: устройство, на котором будет исполняться запрос
@@ -84,21 +86,26 @@ class NerDataset(Dataset, ABC):
         self.anonymization = anonymization if anonymization is not None else lambda _1, _2, x: x
         self.is_uncased = is_uncased
         self.eq_max_padding = eq_max_padding
-        self._record_ids = []
+        record_ids = []
         tokenized_source_list = []
         tokenized_target_list = []
         for xml_file in path.glob("*." + self.file_extension):
             ids_batch, source_batch, target_batch = self._read_file(str(xml_file))
-            self._record_ids.extend(ids_batch)
+            record_ids.extend(ids_batch)
             tokenized_source_list.extend(source_batch)
             for labels in target_batch:
                 tokenized_target_list.append([self.label2index[label] for label in labels])
         # Data tokenization
         self.tokenizer = WordPieceTokenizer(tokenized_source_list,
                                             self.label2index[self.pad_label], pad_flag=eq_max_padding,
-                                            max_sent_len=max_length, pretrained_name=pretrained_tokenizer)
-        tokenized = [self.tokenizer(s, t) for s, t in zip(tokenized_source_list, tokenized_target_list)]
-        self._tokenized_source_list, self._tokenized_target_list = map(list, zip(*tokenized))
+                                            max_sent_len=max_length, overlap=overlap,
+                                            pretrained_name=pretrained_tokenizer)
+        self._record_ids, self._tokenized_source_list, self._tokenized_target_list = [], [], []
+        for record_id, sentence, labels in zip(record_ids, tokenized_source_list, tokenized_target_list):
+            tokenized = self.tokenizer(sentence, labels)
+            self._record_ids.extend([f"{record_id}:{-i}" for i in range(len(tokenized[0]) - 1, -1, -1)])
+            self._tokenized_source_list.extend(tokenized[0])
+            self._tokenized_target_list.extend(tokenized[1])
         self.record2idx = {record_id: i for i, record_id in enumerate(self._record_ids)}
         self._record_ids = np.array(self._record_ids)
         self.device = device

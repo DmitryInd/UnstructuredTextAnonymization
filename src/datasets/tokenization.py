@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import List
+from typing import List, Tuple
 
 from tokenizers import Tokenizer
 from tokenizers import decoders
@@ -11,17 +11,19 @@ from transformers import BertTokenizer, PreTrainedTokenizer
 
 class WordPieceTokenizer:
     def __init__(self, sentence_list: List[List[str]], pad_id: int, pad_flag: bool,
-                 max_sent_len: int = None, pretrained_name: str = None):
+                 max_sent_len: int = None, overlap=40, pretrained_name: str = None):
         """
         :param sentence_list: список предложений для обучения, разбитых на размеченные части
         :param pad_id: id класса 'other'
         :param pad_flag: нужно ли дополнять последовательности токенов до максимальной длины
         :param max_sent_len: максимальная допустимая длина предложений в токенах (+2)
+        :param overlap: пересечение последовательных частей предложений
         :param pretrained_name: путь до сохранённых параметров или название токенизатора
         """
         # Initialisation
         self.pad_id = pad_id
         self.max_sent_len = max_sent_len
+        self.overlap = overlap
         self.pad_flag = pad_flag
         if pretrained_name is None or Path(pretrained_name).exists():
             self._tokenizer = self._train(sentence_list, pretrained_name)
@@ -33,16 +35,17 @@ class WordPieceTokenizer:
         if self.pad_flag and self.max_sent_len is None:
             self.max_sent_len = self._get_max_length_in_tokens(sentence_list)
 
-    def __call__(self, sentence_parts: List[str], labels: List[int], force_padding: bool = None):
+    def __call__(self, sentence_parts: List[str], labels: List[int], force_align: bool = None) -> \
+            Tuple[List[List[int]], List[List[int]]]:
         """
         :param sentence_parts: список частей токенизируемого предложения
         :param labels: список меток, соответствующих этим частям
-        :param force_padding: форсирующий флаг о приведении предложений к одной длине
-        :return: последовательность id текстовых токенов и последовательность целевых меток (для одного предложения)
+        :param force_align: форсирующий флаг о приведении предложений к одной длине
+        :return: список последовательностей id текстовых токенов и
+                 список последовательностей целевых меток, на которые автоматически разбивается входной текст
         """
-        token_id_list = [self.word2index[self.sos_token]]
-        label_id_list = [self.pad_id]
-        padding = self.pad_flag if force_padding is None else force_padding
+        token_id_list, label_id_list = [], []
+        padding = self.pad_flag if force_align is None else force_align
         for sentence_part, label in zip(sentence_parts, labels):
             if self._downloaded:
                 id_list = self._tokenizer.encode(sentence_part, padding=False, truncation=False)[1:-1]
@@ -50,18 +53,26 @@ class WordPieceTokenizer:
                 id_list = self._tokenizer.encode(sentence_parts).ids
             token_id_list.extend(id_list)
             label_id_list.extend([label] * len(id_list))
-            if (self.max_sent_len is not None) and (len(token_id_list) > self.max_sent_len + 1):
-                token_id_list, label_id_list = self._truncate(token_id_list[:self.max_sent_len + 2],
-                                                              label_id_list[:self.max_sent_len + 2])
-                break
+        # Segmenting sentence
+        token_segments, label_segments = [], []
+        if (self.max_sent_len is not None) and (force_align is not False):
+            for i in range(0, len(token_id_list), self.max_sent_len - self.overlap):
+                token_id_seg, label_id_seg = self._truncate(token_id_list[i:i + self.max_sent_len + 1],
+                                                            label_id_list[i:i + self.max_sent_len + 1])
+                token_segments.append([self.word2index[self.sos_token]] + token_id_seg +
+                                      [self.word2index[self.eos_token]])
+                label_segments.append([self.pad_id] + label_id_seg + [self.pad_id])
+        else:
+            token_segments.append([self.word2index[self.sos_token]] + token_id_list +
+                                  [self.word2index[self.eos_token]])
+            label_segments.append([self.pad_id] + label_id_list + [self.pad_id])
 
-        token_id_list.append(self.word2index[self.eos_token])
-        label_id_list.append(self.pad_id)
-        if padding and (self.max_sent_len is not None) and (len(token_id_list) < self.max_sent_len + 2):
-            pad_len = self.max_sent_len + 2 - len(token_id_list)
-            token_id_list.extend([self.word2index[self.pad_token]] * pad_len)
-            label_id_list.extend([self.pad_id] * pad_len)
-        return token_id_list, label_id_list
+        if padding and (self.max_sent_len is not None):
+            for token_id_seg, label_id_seg in zip(token_segments, label_segments):
+                pad_len = self.max_sent_len + 2 - len(token_id_seg)
+                token_id_seg.extend([self.word2index[self.pad_token]] * pad_len)
+                label_id_seg.extend([self.pad_id] * pad_len)
+        return token_segments, label_segments
 
     def decode(self, token_id_list: List[int], label_list: List[int]):
         """
@@ -95,8 +106,15 @@ class WordPieceTokenizer:
 
     def _truncate(self, token_id_list: List[int], label_id_list: List[int]):
         """
-        Возвращает последовательность токенов, обрезанную до максимального размера без дробления слова в конце
+        Возвращает последовательность токенов, обрезанную до максимального размера
+        без дробления слова в начале или в конце
         """
+        for i, token_id in enumerate(token_id_list):
+            if self.index2word[token_id][:2] != "##":
+                token_id_list = token_id_list[i:]
+                label_id_list = label_id_list[i:]
+                break
+
         for i, token_id in enumerate(reversed(token_id_list)):
             if self.index2word[token_id][:2] != "##" and len(token_id_list) - i - 1 <= self.max_sent_len + 1:
                 token_id_list = token_id_list[:-i - 1]
@@ -108,7 +126,7 @@ class WordPieceTokenizer:
     def _get_max_length_in_tokens(self, sentence_list: List[List[str]]) -> int:
         max_length = 0
         for sentence in sentence_list:
-            max_length = max(max_length, len(self(sentence, [0], False)))
+            max_length = max(max_length, len(self(sentence, [0], False)[0][0]))
         return max_length
 
     def _train(self, sentence_list: List[List[str]], path_to_pretrained: str = None) -> Tokenizer:

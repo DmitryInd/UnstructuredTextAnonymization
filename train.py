@@ -16,19 +16,21 @@ if __name__ == '__main__':
     set_seed(42)
     # Config initialisation
     data_config = yaml.load(open("configs/i2b2-2014_data_config.yaml", 'r'), Loader=yaml.Loader)
-    model_config = yaml.load(open("configs/bert-base_model_config.yaml", 'r'), Loader=yaml.Loader)
+    model_config = yaml.load(open("configs/bert-large_model_config.yaml", 'r'), Loader=yaml.Loader)
     # Data processing
     train_dataset = get_ner_dataset(data_type=data_config["train_data_type"],
                                     path_to_folder=data_config["train_data_path"],
                                     is_uncased=data_config["is_uncased"],
                                     pretrained_tokenizer=data_config["pretrained_tokenizer_path"],
                                     max_length=data_config["max_token_number"],
+                                    overlap=data_config["overlap"],
                                     eq_max_padding=data_config["eq_max_padding"])
     val_dataset = get_ner_dataset(data_type=data_config["val_data_type"],
                                   path_to_folder=data_config["validate_data_path"],
                                   is_uncased=data_config["is_uncased"],
                                   pretrained_tokenizer=data_config["pretrained_tokenizer_path"],
                                   max_length=data_config["max_token_number"],
+                                  overlap=data_config["overlap"],
                                   eq_max_padding=data_config["eq_max_padding"])
     train_dataloader = DataLoader(train_dataset, shuffle=True,
                                   batch_size=data_config["batch_size"],
