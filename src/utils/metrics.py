@@ -19,7 +19,8 @@ class Statistics:
         self.tokenizer = self.dataset.tokenizer
         self.record2idx = self.dataset.record2idx
         self.index2label = self.dataset.index2label
-        self.pad_index = self.dataset.label2index[self.dataset.pad_label]
+        self.label2index = self.dataset.label2index
+        self.pad_index = self.label2index[self.dataset.pad_label]
         self.record_ids, self.true_labels, self.predicted_labels = self._compute_true_and_predicted_labels()
         self.confusion_matrix = self._compute_confusion_matrix()
         self.fault_ids = self._get_fault_record_ids()
@@ -46,10 +47,12 @@ class Statistics:
 
         return confusion_matrix
 
-    def _get_fault_record_ids(self):
+    def _get_fault_record_ids(self, target_index=-1):
         faults = set()
         for record_id, true_label, pred_label in zip(self.record_ids, self.true_labels, self.predicted_labels):
-            if true_label != pred_label and true_label != self.pad_index:
+            if true_label == self.pad_index or (target_index != -1 and true_label != target_index):
+                continue
+            if true_label != pred_label:
                 faults.add(record_id)
 
         return list(sorted(list(faults)))
@@ -93,11 +96,14 @@ class Statistics:
         plt.show()
 
     @torch.no_grad()
-    def print_random_failed_predictions(self, num_samples: int = 5):
-        internal_ids = np.random.choice(np.arange(0, len(self.fault_ids)), num_samples, replace=False)
+    def print_random_failed_predictions(self, num_samples: int = 5, fault_record_ids: List[int] = None):
+        if fault_record_ids is None:
+            fault_record_ids = self.fault_ids
+        num_samples = min(num_samples, len(fault_record_ids))
+        internal_ids = np.random.choice(np.arange(len(fault_record_ids)), num_samples, replace=False)
         print('Wrongly predicted examples:')
         for i in internal_ids:
-            record_id = self.fault_ids[i]
+            record_id = fault_record_ids[i]
             idx = self.record2idx[record_id]
             _, token_ids, label_ids = self.dataset[idx]
             pred_ids = self.model(token_ids.unsqueeze(0))[0].argmax(1)
@@ -110,3 +116,7 @@ class Statistics:
                             ['Pred labels:'] + [self.index2label[index] for index in pred_label_ids]],
                            tablefmt='orgtbl'))
 
+    def get_specific_failed_predictions(self, target_type: str, num_samples: int = 2):
+        specific_faults = self._get_fault_record_ids(self.label2index[target_type])
+        self.print_random_failed_predictions(num_samples, specific_faults)
+        return specific_faults

@@ -112,11 +112,14 @@ class ReferenceBookAnonymization:
 
     @staticmethod
     def generate_phone_number():
-        number = "+{} {} {}-{}-{}".format(ReferenceBookAnonymization.generate_random_id(1),
-                                          ReferenceBookAnonymization.generate_random_id(3),
-                                          ReferenceBookAnonymization.generate_random_id(3),
-                                          ReferenceBookAnonymization.generate_random_id(2),
-                                          ReferenceBookAnonymization.generate_random_id(2))
+        mode = np.random.randint(0, 1)
+        pattern = "({}) {}-{}{}"
+        if mode:
+            pattern = "{}-{}-{}{}"
+        number = pattern.format(ReferenceBookAnonymization.generate_random_id(3),
+                                ReferenceBookAnonymization.generate_random_id(3),
+                                ReferenceBookAnonymization.generate_random_id(2),
+                                ReferenceBookAnonymization.generate_random_id(2))
         return number
 
     @staticmethod
