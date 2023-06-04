@@ -7,6 +7,8 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 from torch.utils.data import DataLoader
 from transformers import set_seed
 
+from anonymization.ref_book import ReferenceBookAnonymization
+
 sys.path.insert(1, "./src")
 from datasets.ner_dataset import get_ner_dataset
 from models.bert_model import PretrainedBertNER
@@ -15,11 +17,24 @@ from utils.log_reader import TensorBoardReader
 if __name__ == '__main__':
     set_seed(42)
     # Config initialisation
+    anon_config = yaml.load(open("configs/ref_book_anonymization_config.yaml", 'r'), Loader=yaml.Loader)
     data_config = yaml.load(open("configs/i2b2-2014_data_config.yaml", 'r'), Loader=yaml.Loader)
-    model_config = yaml.load(open("configs/bert-base_model_config.yaml", 'r'), Loader=yaml.Loader)
+    model_config = yaml.load(open("configs/bert-large_model_config.yaml", 'r'), Loader=yaml.Loader)
     # Data processing
+    anonymization = ReferenceBookAnonymization(anon_config['path_to_first_male_names'],
+                                               anon_config['path_to_first_femail_names'],
+                                               anon_config['path_to_last_names'],
+                                               anon_config['path_to_full_addresses'],
+                                               anon_config['path_to_countries'],
+                                               anon_config['path_to_states'],
+                                               anon_config['path_to_cities'],
+                                               anon_config['path_to_streets'],
+                                               anon_config['path_to_organizations'],
+                                               anon_config['path_to_hospitals'],
+                                               anon_config['path_to_professions'])
     train_dataset = get_ner_dataset(data_type=data_config["train_data_type"],
                                     path_to_folder=data_config["train_data_path"],
+                                    anonymization=anonymization,
                                     is_uncased=data_config["is_uncased"],
                                     pretrained_tokenizer=data_config["pretrained_tokenizer_path"],
                                     max_length=data_config["max_token_number"],

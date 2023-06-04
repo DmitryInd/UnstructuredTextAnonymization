@@ -211,7 +211,8 @@ class I2b2FourteenNerDataset(NerDataset):
         if current_pos < len(text):
             source_words.append(text[current_pos:])
             target_labels.append(self.other_label)
-
+        if self.is_uncased:
+            source_words = [s_part.lower() for s_part in source_words]
         return record_ids, [source_words], [target_labels]
 
     @staticmethod
