@@ -57,20 +57,16 @@ class TensorBoardReader:
         data = self.get_scalars(version)
         subplots = [['val_loss', 'train_loss'],
                     ['val_recall', 'train_recall'],
-                    ['val_precision', 'train_precision'],
-                    ['val_f1', 'train_f1']]
+                    ['val_precision', 'train_precision']]
         subplots_titles = [("История ошибки", "Ошибка"),
                            ("История Recall", "Recall"),
-                           ("История Precision", "Precision"),
-                           ("История $F_1$ score", "$F_1$ score")]
+                           ("История Точности", "Точность")]
         labels = {'train_loss': 'Train',
                   'train_recall': 'Train',
                   'train_precision': 'Train',
-                  'train_f1': 'Train',
                   'val_loss': 'Valid',
                   'val_recall': 'Valid',
-                  'val_precision': 'Valid',
-                  'val_f1': 'Valid'}
+                  'val_precision': 'Valid'}
 
         fig, axes = plt.subplots(1, len(subplots), figsize=(7*len(subplots), 5))
         for i, (scalar_names, (title, y_label)) in enumerate(zip(subplots, subplots_titles)):

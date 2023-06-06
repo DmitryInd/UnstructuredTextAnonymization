@@ -18,9 +18,10 @@ class Statistics:
         self.dataset = loader.dataset
         self.tokenizer = self.dataset.tokenizer
         self.record2idx = self.dataset.record2idx
-        self.index2label = self.dataset.index2label
+        self.index2label = self.dataset.index2label  # Last label is necessarily padding
         self.label2index = self.dataset.label2index
         self.pad_index = self.label2index[self.dataset.pad_label]
+        self.other_index = self.label2index[self.dataset.other_label]
         self.record_ids, self.true_labels, self.predicted_labels = self._compute_true_and_predicted_labels()
         self.confusion_matrix = self._compute_confusion_matrix()
         self.fault_ids = self._get_fault_record_ids()
@@ -34,14 +35,16 @@ class Statistics:
             inputs = inputs.to(self.device)
             batch_pred = self.model(inputs).cpu().argmax(2)
             for sample_id, prediction, label in zip(batch_ids, batch_pred, labels.cpu()):
+                prediction = [x for i, x in enumerate(prediction.tolist()) if label[i] != self.pad_index]
+                label = [x for i, x in enumerate(label.tolist()) if label[i] != self.pad_index]
                 record_ids.extend([sample_id.item()]*len(prediction))
-                predictions.extend(prediction.tolist())
-                true_labels.extend(label.tolist())
+                predictions.extend(prediction)
+                true_labels.extend(label)
 
         return record_ids, true_labels, predictions
 
     def _compute_confusion_matrix(self):
-        confusion_matrix = np.zeros((len(self.index2label), len(self.index2label)))
+        confusion_matrix = np.zeros((len(self.index2label) - 1, len(self.index2label) - 1))
         for true_label, pred_label in zip(self.true_labels, self.predicted_labels):
             confusion_matrix[true_label][pred_label] += 1
 
@@ -58,10 +61,10 @@ class Statistics:
         return list(sorted(list(faults)))
 
     def get_classification_report(self):
-        # Exclude pad index
+        # Exclude 'other' index
         target_names, labels = [], []
-        for i, name in enumerate(self.index2label):
-            if i != self.pad_index:
+        for i, name in enumerate(self.index2label[:-1]):
+            if i != self.other_index:
                 target_names.append(name)
                 labels.append(i)
         return classification_report(self.true_labels,
@@ -76,7 +79,8 @@ class Statistics:
         assert len(float_cell_map.shape) == 2, "Confusion matrix has more than two dimensions"
         cmap = plt.cm.get_cmap('Greens')
         max_values = np.sum(float_cell_map, axis=1)
-        rgb_cell_map = [[cmap(cell / (max_value + 1e-5)) for cell in row] for row, max_value in zip(float_cell_map, max_values)]
+        rgb_cell_map = [[cmap(cell / (max_value + 1e-5)) for cell in row]
+                        for row, max_value in zip(float_cell_map, max_values)]
         return rgb_cell_map
 
     def plot_confusion_matrix(self):
@@ -90,7 +94,7 @@ class Statistics:
         ax.axis('off')
         ax.axis('tight')
         ax.set_title('y: true/x: predicted labels')
-        ax.table(self.confusion_matrix.tolist(), rowLabels=self.index2label, colLabels=self.index2label,
+        ax.table(self.confusion_matrix.tolist(), rowLabels=self.index2label[:-1], colLabels=self.index2label[:-1],
                  cellColours=self._get_rgb_cell_map(self.confusion_matrix), loc='center')
         fig.tight_layout()
         plt.show()
