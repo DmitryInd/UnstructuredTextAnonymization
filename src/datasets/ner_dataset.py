@@ -1,9 +1,9 @@
 import xml.etree.ElementTree as ET
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Tuple, List
-import numpy as np
+from typing import Optional, Tuple, List
 
+import numpy as np
 import torch
 from torch.utils.data import Dataset
 
@@ -95,6 +95,7 @@ class NerDataset(Dataset, ABC):
             tokenized_source_list.extend(source_batch)
             for labels in target_batch:
                 tokenized_target_list.append([self.label2index[label] for label in labels])
+        # TODO: перенести обезличивание сюда
         # Data tokenization
         self.tokenizer = WordPieceTokenizer(tokenized_source_list,
                                             self.label2index[self.pad_label], pad_flag=eq_max_padding,
@@ -117,6 +118,10 @@ class NerDataset(Dataset, ABC):
 
     @abstractmethod
     def _read_file(self, path_to_file: str) -> Tuple[List[int], List[List[str]], List[List[str]]]:
+        """
+        :param path_to_file: путь до файла в формате строки
+        :return: ([id документа/записи, ...], [List подряд идущих слов с одной меткой, ...], [Метка, ...])
+        """
         pass
 
     def __len__(self):
@@ -229,7 +234,7 @@ class I2b2FourteenNerDataset(NerDataset):
         return phi_type
 
 
-def get_ner_dataset(data_type: str, *args, **kwargs) -> NerDataset | None:
+def get_ner_dataset(data_type: str, *args, **kwargs) -> Optional[NerDataset]:
     if data_type == "2006":
         return I2b2SixNerDataset(*args, **kwargs)
     elif data_type == "2014":
