@@ -1,11 +1,22 @@
-class MaskFn:
-    def mask_types(self):
+from abc import ABC, abstractmethod
+from typing import List
+
+
+class MaskFn(ABC):
+    @staticmethod
+    @abstractmethod
+    def mask_types():
         raise NotImplementedError()
 
-    @classmethod
-    def mask_type_serialize(cls, m_type):
+    @abstractmethod
+    def mask_type_serialize(self, m_type):
         raise NotImplementedError()
 
-    @classmethod
-    def mask(cls, doc):
+    @abstractmethod
+    def mask(self, doc):
         raise NotImplementedError()
+
+    @staticmethod
+    @abstractmethod
+    def mask_types() -> List[str]:
+        pass

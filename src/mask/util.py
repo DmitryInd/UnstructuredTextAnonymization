@@ -50,6 +50,7 @@ def align_char_mask_to_tokens(
 
 
 def masked_spans_bounds_valid(masked_spans, d_len):
+    # masked_spans = [mask_type, mask_offset, mask_len]
     for span_off, span_len in [s[-2:] for s in masked_spans]:
         if span_off < 0 or span_len <= 0 or span_off + span_len > d_len:
             return False
@@ -60,6 +61,7 @@ def masked_spans_overlap(masked_spans):
     last_off = None
     last_len = None
     overlap = False
+    # masked_spans = [mask_type, mask_offset, mask_len]
     for span_off, span_len in [s[-2:] for s in sorted(masked_spans, key=lambda x: x[-2])]:
         if last_off is not None:
             if span_off < last_off + last_len:

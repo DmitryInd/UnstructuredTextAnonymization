@@ -1,6 +1,7 @@
 import random
 from enum import Enum
 from functools import lru_cache
+from typing import List, Tuple
 
 from nltk import sent_tokenize, word_tokenize as nltk_word_tokenize
 
@@ -13,34 +14,35 @@ class MaskNgramType(Enum):
 
 
 class NgramsMaskFn(MaskFn):
-    def __init__(self, p=0.03):
+    def __init__(self, p=0.03, max_ngram_mask_length=8):
         try:
             sent_tokenize('Ensure punkt installed.')
         except:
             raise ValueError('Need to call nltk.download(\'punkt\')')
         self.p = p
+        self.max_ngram_mask_length=max_ngram_mask_length
 
-    @classmethod
-    def mask_types(cls):
+    @staticmethod
+    def mask_types() -> List[str]:
         return list(MaskNgramType)
 
-    @classmethod
-    def mask_type_serialize(cls, m_type):
+    def mask_type_serialize(self, m_type):
         return m_type.name.lower()
 
-    def mask(self, doc, mask_p=None, max_ngram_mask_length=8):
+    def mask(self, doc, mask_p=None, max_ngram_mask_length=8) -> List[Tuple[MaskNgramType, int, int]]:
         """
         Маскирует случайные n-граммы слов в документе. Длина n выбирается случайным образом равномерно между 1 и
         указанной максимальной длиной.
         :param doc: текст документа в формате строки
         :param mask_p: вероятность замаскировать n-грамму, начиная с указанного слова
         :param max_ngram_mask_length: максимальная длина замаскированной n-граммы
-        :return: список троек
+        :return: список троек:
         (тип замаскированного объекта, сдвиг на начало замаскированного объекта, длина замаскированного объекта)
         """
         doc_offs = doc_to_hierarchical_offsets(doc)
 
         mask_p = self.p if mask_p is None else mask_p
+        max_ngram_mask_length = self.max_ngram_mask_length if max_ngram_mask_length is None else max_ngram_mask_length
 
         def _trial(p):
             if p <= 0:

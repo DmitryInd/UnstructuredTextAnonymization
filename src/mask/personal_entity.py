@@ -1,4 +1,5 @@
 from enum import Enum
+from typing import List
 
 from nltk.tokenize import sent_tokenize
 
@@ -28,12 +29,11 @@ class PersonalEntityMaskFn(MaskFn):
         self.is_markup = is_markup
         self.markup_model = markup_model
 
-    @classmethod
-    def mask_types(cls):
+    @staticmethod
+    def mask_types() -> List[str]:
         return list(MaskEntityType)
 
-    @classmethod
-    def mask_type_serialize(cls, m_type):
+    def mask_type_serialize(self, m_type):
         return m_type.name.lower()
 
     def mask(self, doc, is_markup=None):
