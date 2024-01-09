@@ -23,10 +23,10 @@ class NgramsMaskFn(MaskFn):
         self.max_ngram_mask_length=max_ngram_mask_length
 
     @staticmethod
-    def mask_types() -> List[str]:
+    def mask_types() -> List[Enum]:
         return list(MaskNgramType)
 
-    def mask_type_serialize(self, m_type):
+    def mask_type_serialize(self, m_type: Enum) -> str:
         return m_type.name.lower()
 
     def mask(self, doc, mask_p=None, max_ngram_mask_length=8) -> List[Tuple[MaskNgramType, int, int]]:

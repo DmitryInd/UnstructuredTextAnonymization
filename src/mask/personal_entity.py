@@ -30,10 +30,10 @@ class PersonalEntityMaskFn(MaskFn):
         self.markup_model = markup_model
 
     @staticmethod
-    def mask_types() -> List[str]:
+    def mask_types() -> List[Enum]:
         return list(MaskEntityType)
 
-    def mask_type_serialize(self, m_type):
+    def mask_type_serialize(self, m_type: Enum) -> str:
         return m_type.name.lower()
 
     def mask(self, doc, is_markup=None):

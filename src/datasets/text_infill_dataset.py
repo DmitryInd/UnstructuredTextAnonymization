@@ -101,7 +101,7 @@ class TextInfillDataset(Dataset, ABC):
 
     @abstractmethod
     @property
-    def _mask_types(self) -> Enum:
+    def _mask_types(self) -> List[Enum]:
         pass
 
     @abstractmethod
@@ -148,17 +148,16 @@ class RandomMaskTextInfillDataset(TextInfillDataset):
                  num_examples=3, max_num_retries=3, min_masked_spans=None, max_masked_spans=None,
                  pretrained_tokenizer: str = None, max_length=100, overlap=40, eq_max_padding=True,
                  device="cuda:0"):
-
-        super().__init__(path_to_data, split, max_num_documents, is_uncased, pretrained_tokenizer, max_length, overlap,
-                         eq_max_padding, device)
         self.masker = NgramsMaskFn(mask_p, max_span_len)
         self.num_examples = num_examples  # per document
         self.max_num_retries = max_num_retries  # per example
         self.min_masked_spans = min_masked_spans  # per example
         self.max_masked_spans = max_masked_spans  # per example
+        super().__init__(path_to_data, split, max_num_documents, is_uncased, pretrained_tokenizer, max_length, overlap,
+                         eq_max_padding, device)
 
     @property
-    def _mask_types(self) -> List[str]:
+    def _mask_types(self) -> List[Enum]:
         return self.masker.mask_types()
 
     def _read_data(self, path_to_data: str) -> List[Tuple[str, List[List[Tuple[MaskNgramType, int, int]]]]]:
@@ -303,6 +302,7 @@ def roc_stories(split='train', data_dir=None, with_titles=True, exclude_nonstand
     if data_dir is None:
         data_dir = ROC_STORIES_DIR
 
+    titled = None
     if split == 'train':
         with open(os.path.join(data_dir, 'train_title.txt'), 'r') as f:
             stories = f.read().split('\n\n\n')

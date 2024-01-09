@@ -1,10 +1,10 @@
 import json
-import os
 from enum import Enum
 from functools import lru_cache
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Tuple, Set
 
+import numpy as np
 import regex as re
 from tokenizers import Tokenizer
 from tokenizers import decoders
@@ -12,6 +12,8 @@ from tokenizers.models import WordPiece
 from tokenizers.pre_tokenizers import Whitespace
 from tokenizers.trainers import WordPieceTrainer
 from transformers import BertTokenizer, PreTrainedTokenizer
+
+from mask.util import align_char_mask_to_tokens, apply_masked_spans
 
 
 class WordPieceTokenizer:
@@ -60,7 +62,7 @@ class WordPieceTokenizer:
             label_id_list.extend([label] * len(id_list))
         # Segmenting sentence
         token_segments, label_segments = [], []
-        if (self.max_sent_len is not None) and (force_align is not False):
+        if (self.max_sent_len is not None) and force_align:
             for i in range(0, len(token_id_list), self.max_sent_len - self.overlap):
                 token_id_seg, label_id_seg = self._truncate(token_id_list[i:i + self.max_sent_len + 1],
                                                             label_id_list[i:i + self.max_sent_len + 1])
@@ -169,48 +171,57 @@ class WordPieceTokenizer:
         return self._tokenizer
 
 
-class GPT2Tokenizer:
+class TargetType(Enum):
+    PAD = 0
+    CONTEXT = 1
+    CONTEXT_SPECIAL = 2
+    CONTEXT_INFILL_SEP = 3
+    INFILL = 4
+    INFILL_SPECIAL = 5
+    INFILL_REDUNDANT = 6
+
+
+class OfficialGPT2Tokenizer:
     """
     В коде статьи, как я понял, используется оригинальный код bpe токенизатора для GPT2 модели
     вместо реализации из библиотеки transformers. Когда появится свободное время,
     я заменю текущее решение на класс из указанной библиотеки.
     """
-    def __init__(self, model_name, models_dir, mask_types: Enum):
+
+    def __init__(self, tokenizer_dir, mask_types: List[Enum], errors='replace',
+                 max_sent_len: int = None, overlap: int = None):
+        """
+        :param tokenizer_dir: директория с сохранёнными параметрами токенизаторов
+        :param mask_types: типы масок, содержащихся во входных данных
+        :param errors: способ обработки ошибок
+        """
         # Load pretrained tokenizer for GPT2
-        with open(Path(models_dir) / Path(model_name) / Path('encoder.json'), 'r') as f:
+        with open(Path(tokenizer_dir) / Path('official_gpt2_encoder/encoder.json'), 'r') as f:
             encoder = json.load(f)
-        with open(Path(models_dir) / Path(model_name) / Path('vocab.bpe'), 'r', encoding="utf-8") as f:
+        with open(Path(tokenizer_dir) / Path('official_gpt2_encoder/vocab.bpe'), 'r', encoding="utf-8") as f:
             bpe_data = f.read()
         bpe_merges = [tuple(merge_str.split()) for merge_str in bpe_data.split('\n')[1:-1]]
-
+        # Tokenizer main entities
         self.encoder = encoder
         self.decoder = {v: k for k, v in self.encoder.items()}
-        self.errors = errors  # how to handle errors in decoding
+        self.errors = errors
         self.byte_encoder = self.bytes_to_unicode()
         self.byte_decoder = {v: k for k, v in self.byte_encoder.items()}
         self.bpe_ranks = dict(zip(bpe_merges, range(len(bpe_merges))))
         self.cache = {}
-
         # Pattern for word splitting
         # Should have added re.IGNORECASE so BPE merges can happen for capitalized versions of contractions
         self.pat = re.compile(r"""'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+""")
-
-        # Update tokenizer
-        base_vocab_size = len(self.encoder)
-        start_infill_id = base_vocab_size + 0
-        end_infill_id = base_vocab_size + 1
-        additional_ids_to_tokens = {
-            start_infill_id: '<|startofinfill|>',
-            end_infill_id: '<|endofinfill|>'
-        }
-        mask_type_to_id = {}
-        for i, t in enumerate(mask_types):
-            t_id = base_vocab_size + 2 + i
-            t_tok = '<|infill_{}|>'.format(mask_cls.mask_type_serialize(t))
-            additional_ids_to_tokens[t_id] = t_tok
-            mask_type_to_id[t] = t_id
-        print(additional_ids_to_tokens)
-        # vocab_size = ilm.tokenize_util.update_tokenizer(additional_ids_to_tokens, tokenizer)
+        # Add to tokenizer vocabulary technical characters
+        self.start_infill_id = None
+        self.end_infill_id = None
+        self.mask_type_to_id = None
+        self.add_special_characters(mask_types)
+        # Parameters for splitting text
+        self.max_sent_len = max_sent_len  # 768
+        self.overlap = overlap
+        if max_sent_len is not None:
+            self.overlap = max_sent_len // 4 if overlap is None else overlap
 
     @staticmethod
     @lru_cache()
@@ -236,8 +247,63 @@ class GPT2Tokenizer:
         cs = [chr(n) for n in cs]
         return dict(zip(bs, cs))
 
+    def add_special_characters(self, mask_types: List[Enum]) -> int:
+        """
+        :param mask_types: список типов масок в формате Enum
+        :return: новое количество токенов в токенизаторе
+        """
+        base_vocab_size = len(self.encoder)
+        self.start_infill_id = base_vocab_size + 0
+        self.end_infill_id = base_vocab_size + 1
+        additional_ids_to_tokens = {
+            self.start_infill_id: '<|startofinfill|>',
+            self.end_infill_id: '<|endofinfill|>'
+        }
+        self.mask_type_to_id = {}
+        for i, t in enumerate(mask_types):
+            t_id = base_vocab_size + 2 + i
+            t_tok = '<|infill_{}|>'.format(t.name.lower())
+            additional_ids_to_tokens[t_id] = t_tok
+            self.mask_type_to_id[t] = t_id
+
+        additional_tokens_to_ids = {v: k for k, v in additional_ids_to_tokens.items()}
+        self.encoder.update(additional_tokens_to_ids)
+        self.decoder.update(additional_ids_to_tokens)
+        vocab_size_after = len(self.encoder)
+
+        return vocab_size_after
+
+    def __call__(self, text: str, masks: List[List[Tuple[Enum, int, int]]]) -> List[List[int]]:
+        """
+        :param text: текст в формате строки
+        :param masks: список наборов масок для текста в формате (тип, сдвиг, длина)
+        :return: список последовательностей токенов и соответствующие им маски
+        """
+        tokens_ids = self.encode(text)
+        train_inputs, train_tts, train_num_docs = self.doc_and_char_masks_to_input_and_tts(text, tokens_ids, masks)
+        token_mask_sets = []
+        for mask in masks:
+            pass
+        # TODO Добавить разделение на последовательности максимальной длины с пересечением
+        if max_num_examples is not None:
+            set_random_seed(args.seed)
+            example_ids = random.sample(list(range(inputs.shape[0])), max_num_examples)
+            inputs = np.take(inputs, example_ids, axis=0)
+            tts = np.take(tts, example_ids, axis=0)
+        return [tokens_ids]
+
+    def encode(self, text) -> List[int]:
+        """
+        Кодирует текст без разделения его на подпоследовательности
+        """
+        bpe_tokens = []
+        for token in re.findall(self.pat, text):
+            token = ''.join(self.byte_encoder[b] for b in token.encode('utf-8'))
+            bpe_tokens.extend(self.encoder[bpe_token] for bpe_token in self.bpe(token).split(' '))
+        return bpe_tokens
+
     @staticmethod
-    def get_pairs(word):
+    def get_pairs(word: Tuple[str]) -> Set[Tuple[str, str]]:
         """Return set of symbol pairs in a word.
 
         Word is represented as tuple of symbols (symbols being variable-length strings).
@@ -253,7 +319,7 @@ class GPT2Tokenizer:
         if token in self.cache:
             return self.cache[token]
         word = tuple(token)
-        pairs = get_pairs(word)
+        pairs = self.get_pairs(word)
 
         if not pairs:
             return token
@@ -285,19 +351,83 @@ class GPT2Tokenizer:
             if len(word) == 1:
                 break
             else:
-                pairs = get_pairs(word)
+                pairs = self.get_pairs(word)
         word = ' '.join(word)
         self.cache[token] = word
         return word
 
-    def encode(self, text):
-        bpe_tokens = []
-        for token in re.findall(self.pat, text):
-            token = ''.join(self.byte_encoder[b] for b in token.encode('utf-8'))
-            bpe_tokens.extend(self.encoder[bpe_token] for bpe_token in self.bpe(token).split(' '))
-        return bpe_tokens
-
-    def decode(self, tokens):
+    def decode(self, tokens: List[int]) -> str:
         text = ''.join([self.decoder[token] for token in tokens])
         text = bytearray([self.byte_decoder[c] for c in text]).decode('utf-8', errors=self.errors)
         return text
+
+    def doc_and_char_masks_to_input_and_tts(self, doc, doc_tokens_ids, char_masks, skip_naive_incomplete=False):
+        # Get text tokens from token_ids
+        raw_tokens = [self.decoder[token_id] for token_id in doc_tokens_ids]
+        doc_tokens = [bytearray([self.byte_decoder[c] for c in token]).decode('utf-8', errors=self.errors)
+                      for token in raw_tokens]
+
+        # Align character masks to tokens
+        tok_masks = []
+        for char_mask in char_masks:
+            try:
+                tok_mask = align_char_mask_to_tokens(doc, doc_tokens, char_mask)
+            except:
+                # error_to_count['Failed to align character-level mask to tokens'] += 1
+                continue
+            tok_masks.append(tok_mask)
+
+        # Apply masks
+        contexts_and_answers = []
+        for tok_mask in tok_masks:
+            try:
+                ca = apply_masked_spans(doc_tokens_ids, tok_mask, self.mask_type_to_id)
+            except:
+                # error_to_count['Failed to apply mask'] += 1
+                continue
+            contexts_and_answers.append((tok_mask, ca))
+
+        special_ids = set([self.start_infill_id, self.end_infill_id] + list(self.mask_type_to_id.values()))
+        # TODO выделить в отдельную функцию
+        inputs = np.zeros((len(contexts_and_answers), sequence_length), dtype=np.uint16)
+        tts = np.full((len(contexts_and_answers), sequence_length), TargetType.PAD.value, dtype=np.uint8)
+        for i, (mask, (context, answers)) in enumerate(contexts_and_answers):
+            # Create example
+            example = []
+            # (Masked) Context
+            # Example: She ate <?> for <?>
+            example += context
+            # Context / answer separator
+            context_len = len(example)
+            # Example: <S>
+            example += [self.start_infill_id]
+            # Answers
+            # Example: cereal<E>breakfast<E>
+            for mask_type, answer in answers:
+                example += answer
+                example += [self.end_infill_id]
+
+            if len(example) > sequence_length:
+                example = example[:sequence_length]
+                # warning_to_count['Example longer than sequence length'] += 1
+
+            # Find special tokens
+            context_special_idxs = [l for l, t in enumerate(example) if l < context_len and t in special_ids]
+            infill_special_idxs = [l for l, t in enumerate(example) if l > context_len and t in special_ids]
+
+            # Store example in output array
+            if len(example) > 0 and (
+                    min(example) < np.iinfo(inputs.dtype).min or max(example) > np.iinfo(inputs.dtype).max):
+                raise ValueError('Example cannot be stored in numpy array')
+            inputs[i, :len(example)] = example
+
+            # Store target types in output array
+            tts[i, :context_len] = TargetType.CONTEXT.value
+            for l in context_special_idxs:
+                tts[i, l] = TargetType.CONTEXT_SPECIAL.value
+            tts[i, context_len:context_len + 1] = TargetType.CONTEXT_INFILL_SEP.value
+            tts[i, context_len + 1:len(example)] = TargetType.INFILL.value
+            for l in infill_special_idxs:
+                tts[i, l] = TargetType.INFILL_SPECIAL.value
+
+        return inputs, tts

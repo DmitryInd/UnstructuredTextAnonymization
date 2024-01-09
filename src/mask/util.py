@@ -1,4 +1,5 @@
-from typing import Optional
+from enum import Enum
+from typing import Optional, Tuple, List
 
 from base import MaskFn
 from n_gram import NgramsMaskFn
@@ -14,12 +15,17 @@ def get_mask_function(mask_type, *args, **kwargs) -> Optional[MaskFn]:
     return None
 
 
-def align_char_mask_to_tokens(
-        d,
-        d_toks,
-        masked_char_spans,
-        ensure_valid_bounds_in_spans=True,
-        ensure_nonoverlapping_spans=True):
+def align_char_mask_to_tokens(d: str, d_toks: List[str], masked_char_spans: List[Tuple[Enum, int, int]],
+                              ensure_valid_bounds_in_spans=True, ensure_nonoverlapping_spans=True) \
+        -> List[Tuple[Enum, int, int]]:
+    """
+    :param d: текст документа в формате строки
+    :param d_toks: текстовые токены, на которые разбит документ
+    :param masked_char_spans: маски в формате (тип, сдвиг по символам, длина по символам)
+    :param ensure_valid_bounds_in_spans: проверять ли границы масок
+    :param ensure_nonoverlapping_spans: проверять ли пересечения границ масок
+    :return: маски в формате (тип, сдвиг по токенам, длина по токенам)
+    """
     # Find token offsets in characters
     try:
         d_toks_offs = tokens_offsets(d, d_toks)
@@ -72,7 +78,15 @@ def masked_spans_overlap(masked_spans):
     return overlap
 
 
-def align_charspan_to_tokenspan(x, x_tok, char_offset, char_len):
+def align_charspan_to_tokenspan(x, x_tok, char_offset, char_len) -> Tuple[int, int, int, int]:
+    """
+    Переводит запись текстового отрезка от значений в символах к значениям в токенах. Выравнивает сдвиги между собой.
+    :param x: строка текста
+    :param x_tok: токены, на которые разбита строка
+    :param char_offset: сдвиги отрезка по символам
+    :param char_len: длина отрезка по символам
+    :return: (сдвиг по символам, длина по символам, сдвиг по токенам, длина по токенам)
+    """
     if len(x_tok) == 0:
         raise ValueError()
     if char_offset < 0 or char_len < 0 or (char_offset + char_len) > len(x):
@@ -80,7 +94,7 @@ def align_charspan_to_tokenspan(x, x_tok, char_offset, char_len):
 
     if type(x_tok) != tuple:
         x_tok = tuple(x_tok)
-    x_tok_offsets, x_tok_residuals, x_tok_rres = _tokens_offsets_and_residuals_memoized(x, x_tok)
+    x_tok_offsets, x_tok_residuals, x_tok_rres = _tokens_offsets_and_residuals_memorized(x, x_tok)
     if None in x_tok_offsets:
         raise ValueError()
     x_tok_residuals.append(x_tok_rres)
@@ -111,10 +125,7 @@ def align_charspan_to_tokenspan(x, x_tok, char_offset, char_len):
     return char_offset, char_len, token_offset, token_len
 
 
-def apply_masked_spans(
-        doc_str_or_token_list,
-        masked_spans,
-        mask_type_to_substitution):
+def apply_masked_spans(doc_str_or_token_list, masked_spans, mask_type_to_substitution):
     if isinstance(doc_str_or_token_list, str):
         context, answers = _apply_masked_spans(
             list(doc_str_or_token_list),
@@ -132,10 +143,14 @@ def apply_masked_spans(
         raise ValueError()
 
 
-def _apply_masked_spans(
-        doc,
-        masked_spans,
-        mask_type_to_substitution):
+def _apply_masked_spans(doc, masked_spans, mask_type_to_substitution) -> Tuple[list, List[Enum, list]]:
+    """
+    Заменяет текст замаскированных отрезков на маскировочные токены
+    :param doc: текст в формате списка токенов
+    :param masked_spans: список замаскированных отрезков текста в формате (сдвиг, длина)
+    :param mask_type_to_substitution: словарь маскировочных токен для каждого типа маски
+    :return: (контекст с убранным замаскированным текстом, список замаскированных отрезков: (тип, список токенов))
+    """
     if None in doc:
         raise ValueError()
 
@@ -169,13 +184,25 @@ def _apply_masked_spans(
     return context, answers
 
 
-def tokens_offsets(x, x_tok):
+def tokens_offsets(x, x_tok) -> List[int]:
+    """
+    Ищет позиции токенов, на которые делится строка.
+    :param x: строка текста
+    :param x_tok: текстовые токены, на которые делится строка
+    :return:
+    """
     if type(x_tok) != tuple:
         x_tok = tuple(x_tok)
-    return _tokens_offsets_and_residuals_memoized(x, x_tok)[0]
+    return _tokens_offsets_and_residuals_memorized(x, x_tok)[0]
 
 
-def _tokens_offsets_and_residuals_memoized(x, x_tok):
+def _tokens_offsets_and_residuals_memorized(x, x_tok) -> Tuple[List[int], List[str], str]:
+    """
+    Исследует, как текст был разбит на токены.
+    :param x: строка текста
+    :param x_tok: текстовые токены, на которые делится строка
+    :return: (список сдвигов на начало токенов; список оставшихся строк между токенами, которые остались неразмеченными; оставшаяся неразмеченной строка после всех токенов)
+    """
     x_remaining_off = 0
     x_remaining = x[:]
 
