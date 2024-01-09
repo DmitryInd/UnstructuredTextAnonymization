@@ -178,7 +178,6 @@ class TargetType(Enum):
     CONTEXT_INFILL_SEP = 3
     INFILL = 4
     INFILL_SPECIAL = 5
-    INFILL_REDUNDANT = 6
 
 
 class OfficialGPT2Tokenizer:
@@ -273,18 +272,15 @@ class OfficialGPT2Tokenizer:
 
         return vocab_size_after
 
-    def __call__(self, text: str, masks: List[List[Tuple[Enum, int, int]]]) -> List[List[int]]:
+    def __call__(self, text: str, masks: List[List[Tuple[Enum, int, int]]], with_answers=True) -> List[List[int]]:
         """
         :param text: текст в формате строки
         :param masks: список наборов масок для текста в формате (тип, сдвиг, длина)
         :return: список последовательностей токенов и соответствующие им маски
         """
         tokens_ids = self.encode(text)
-        train_inputs, train_tts, train_num_docs = self.doc_and_char_masks_to_input_and_tts(text, tokens_ids, masks)
-        token_mask_sets = []
-        for mask in masks:
-            pass
-        # TODO Добавить разделение на последовательности максимальной длины с пересечением
+        context_and_answers = self._get_context_and_answers(text, tokens_ids, masks)
+        inputs, tts = self._build_query(context_and_answers, with_answers)
         if max_num_examples is not None:
             set_random_seed(args.seed)
             example_ids = random.sample(list(range(inputs.shape[0])), max_num_examples)
@@ -361,7 +357,15 @@ class OfficialGPT2Tokenizer:
         text = bytearray([self.byte_decoder[c] for c in text]).decode('utf-8', errors=self.errors)
         return text
 
-    def doc_and_char_masks_to_input_and_tts(self, doc, doc_tokens_ids, char_masks, skip_naive_incomplete=False):
+    def _get_context_and_answers(self, doc: str, doc_tokens_ids: List[int],
+                                 char_masks: List[List[Tuple[Enum, int, int]]]) \
+            -> List[Tuple[list, List[Tuple[Enum, list]]]]:
+        """
+        :param doc: текст в формате строки
+        :param doc_tokens_ids: текст в формате списка id токенов, на которые он разбит
+        :param char_masks: список наборов масок для текста в формате [(тип, сдвиг, длина), ...]
+        :return: [список токенов документа без замаскированных символов и список масок в формате (тип, список токенов), ...]
+        """
         # Get text tokens from token_ids
         raw_tokens = [self.decoder[token_id] for token_id in doc_tokens_ids]
         doc_tokens = [bytearray([self.byte_decoder[c] for c in token]).decode('utf-8', errors=self.errors)
@@ -385,49 +389,58 @@ class OfficialGPT2Tokenizer:
             except:
                 # error_to_count['Failed to apply mask'] += 1
                 continue
-            contexts_and_answers.append((tok_mask, ca))
+            contexts_and_answers.append(ca)
 
+        return contexts_and_answers
+
+    def _build_query(self, contexts_and_answers: List[Tuple[list, List[Tuple[Enum, list]]]], with_answers=True):
         special_ids = set([self.start_infill_id, self.end_infill_id] + list(self.mask_type_to_id.values()))
-        # TODO выделить в отдельную функцию
-        inputs = np.zeros((len(contexts_and_answers), sequence_length), dtype=np.uint16)
-        tts = np.full((len(contexts_and_answers), sequence_length), TargetType.PAD.value, dtype=np.uint8)
-        for i, (mask, (context, answers)) in enumerate(contexts_and_answers):
-            # Create example
-            example = []
-            # (Masked) Context
-            # Example: She ate <?> for <?>
-            example += context
-            # Context / answer separator
-            context_len = len(example)
-            # Example: <S>
-            example += [self.start_infill_id]
-            # Answers
-            # Example: cereal<E>breakfast<E>
-            for mask_type, answer in answers:
-                example += answer
-                example += [self.end_infill_id]
+        inputs = []
+        markups = []  # Markup for cross-entropy loss
+        longer_than_max_sent_len = 0
+        for context, answers in contexts_and_answers:
+            for i in range(0, len(context), self.max_sent_len - self.overlap):
+                token_input = np.zeros((1, self.max_sent_len), dtype=np.uint16)
+                markup = np.full((1, self.max_sent_len), TargetType.PAD.value, dtype=np.uint8)
+                # Create example
+                example = []
+                # (Masked) Context
+                # Example: She ate <?> for <?>
+                example += context
+                # Context / answer separator
+                context_len = len(example)
+                # Example: <S>
+                example += [self.start_infill_id]
+                # TODO Добавить разделение на последовательности максимальной длины с пересечением
+                if with_answers:
+                    # Answers
+                    # Example: cereal<E>breakfast<E>
+                    for mask_type, answer in answers:
+                        example += answer
+                        example += [self.end_infill_id]
 
-            if len(example) > sequence_length:
-                example = example[:sequence_length]
-                # warning_to_count['Example longer than sequence length'] += 1
+                if len(example) > self.max_sent_len:
+                    example = example[:self.max_sent_len]
+                    longer_than_max_sent_len += 1
 
-            # Find special tokens
-            context_special_idxs = [l for l, t in enumerate(example) if l < context_len and t in special_ids]
-            infill_special_idxs = [l for l, t in enumerate(example) if l > context_len and t in special_ids]
+                # Find special tokens
+                context_special_idxs = [l for l, t in enumerate(example) if l < context_len and t in special_ids]
+                infill_special_idxs = [l for l, t in enumerate(example) if l > context_len and t in special_ids]
 
-            # Store example in output array
-            if len(example) > 0 and (
-                    min(example) < np.iinfo(inputs.dtype).min or max(example) > np.iinfo(inputs.dtype).max):
-                raise ValueError('Example cannot be stored in numpy array')
-            inputs[i, :len(example)] = example
+                # Store example in output array
+                if len(example) > 0 and (
+                        min(example) < np.iinfo(inputs.dtype).min or max(example) > np.iinfo(inputs.dtype).max):
+                    raise ValueError('Example cannot be stored in numpy array')
+                inputs[i, :len(example)] = example
 
-            # Store target types in output array
-            tts[i, :context_len] = TargetType.CONTEXT.value
-            for l in context_special_idxs:
-                tts[i, l] = TargetType.CONTEXT_SPECIAL.value
-            tts[i, context_len:context_len + 1] = TargetType.CONTEXT_INFILL_SEP.value
-            tts[i, context_len + 1:len(example)] = TargetType.INFILL.value
-            for l in infill_special_idxs:
-                tts[i, l] = TargetType.INFILL_SPECIAL.value
+                # Store target types in output array
+                tts[i, :context_len] = TargetType.CONTEXT.value
+                for l in context_special_idxs:
+                    tts[i, l] = TargetType.CONTEXT_SPECIAL.value
+                tts[i, context_len:context_len + 1] = TargetType.CONTEXT_INFILL_SEP.value
+                tts[i, context_len + 1:len(example)] = TargetType.INFILL.value
+                for l in infill_special_idxs:
+                    tts[i, l] = TargetType.INFILL_SPECIAL.value
 
+        print(f'{longer_than_max_sent_len} out of {len(inputs)} examples were longer than sequence length')
         return inputs, tts

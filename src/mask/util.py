@@ -126,6 +126,7 @@ def align_charspan_to_tokenspan(x, x_tok, char_offset, char_len) -> Tuple[int, i
 
 
 def apply_masked_spans(doc_str_or_token_list, masked_spans, mask_type_to_substitution):
+    # TODO Возможно, эту функцию можно удалить
     if isinstance(doc_str_or_token_list, str):
         context, answers = _apply_masked_spans(
             list(doc_str_or_token_list),
@@ -143,12 +144,13 @@ def apply_masked_spans(doc_str_or_token_list, masked_spans, mask_type_to_substit
         raise ValueError()
 
 
-def _apply_masked_spans(doc, masked_spans, mask_type_to_substitution) -> Tuple[list, List[Enum, list]]:
+def _apply_masked_spans(doc: List[int], masked_spans: List[Tuple[Enum, int, int]],
+                        mask_type_to_substitution: dict) -> Tuple[list, List[Tuple[Enum, list]]]:
     """
     Заменяет текст замаскированных отрезков на маскировочные токены
     :param doc: текст в формате списка токенов
-    :param masked_spans: список замаскированных отрезков текста в формате (сдвиг, длина)
-    :param mask_type_to_substitution: словарь маскировочных токен для каждого типа маски
+    :param masked_spans: список замаскированных отрезков текста в формате (тип, сдвиг, длина)
+    :param mask_type_to_substitution: словарь маскировочных токенов для каждого типа маски
     :return: (контекст с убранным замаскированным текстом, список замаскированных отрезков: (тип, список токенов))
     """
     if None in doc:
