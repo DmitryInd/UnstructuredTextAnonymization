@@ -188,7 +188,7 @@ class OfficialGPT2Tokenizer:
     """
 
     def __init__(self, tokenizer_dir, mask_types: List[Enum], errors='replace',
-                 max_sent_len: int = None, overlap: int = None):
+                 max_sent_len: int = None, overlap: int = None, pad_flag: bool = True):
         """
         :param tokenizer_dir: директория с сохранёнными параметрами токенизаторов
         :param mask_types: типы масок, содержащихся во входных данных
@@ -217,8 +217,9 @@ class OfficialGPT2Tokenizer:
         self.mask_type_to_id = None
         self.add_special_characters(mask_types)
         # Parameters for splitting text
-        self.max_sent_len = max_sent_len  # 768
+        self.max_sent_len = max_sent_len  # 1024
         self.overlap = overlap
+        self.pad_flag = pad_flag
         if max_sent_len is not None:
             self.overlap = max_sent_len // 4 if overlap is None else overlap
 
@@ -272,21 +273,17 @@ class OfficialGPT2Tokenizer:
 
         return vocab_size_after
 
-    def __call__(self, text: str, masks: List[List[Tuple[Enum, int, int]]], with_answers=True) -> List[List[int]]:
+    def __call__(self, text: str, masks: List[List[Tuple[Enum, int, int]]], with_answers=True) \
+            -> Tuple[List[np.array], List[np.array]]:
         """
         :param text: текст в формате строки
         :param masks: список наборов масок для текста в формате (тип, сдвиг, длина)
-        :return: список последовательностей токенов и соответствующие им маски
+        :return: список массивов токенов запросов для модели, список разметки запросов для CrossEntropy
         """
         tokens_ids = self.encode(text)
         context_and_answers = self._get_context_and_answers(text, tokens_ids, masks)
-        inputs, tts = self._build_query(context_and_answers, with_answers)
-        if max_num_examples is not None:
-            set_random_seed(args.seed)
-            example_ids = random.sample(list(range(inputs.shape[0])), max_num_examples)
-            inputs = np.take(inputs, example_ids, axis=0)
-            tts = np.take(tts, example_ids, axis=0)
-        return [tokens_ids]
+        inputs, tts = self._build_queries(context_and_answers, with_answers)  # tts = target types
+        return inputs, tts
 
     def encode(self, text) -> List[int]:
         """
@@ -364,7 +361,7 @@ class OfficialGPT2Tokenizer:
         :param doc: текст в формате строки
         :param doc_tokens_ids: текст в формате списка id токенов, на которые он разбит
         :param char_masks: список наборов масок для текста в формате [(тип, сдвиг, длина), ...]
-        :return: [список токенов документа без замаскированных символов и список масок в формате (тип, список токенов), ...]
+        :return: [(список токенов документа без замаскированных символов, список масок в формате (тип, список токенов)), ...]
         """
         # Get text tokens from token_ids
         raw_tokens = [self.decoder[token_id] for token_id in doc_tokens_ids]
@@ -393,54 +390,95 @@ class OfficialGPT2Tokenizer:
 
         return contexts_and_answers
 
-    def _build_query(self, contexts_and_answers: List[Tuple[list, List[Tuple[Enum, list]]]], with_answers=True):
+    def _build_queries(self, contexts_and_answers: List[Tuple[list, List[Tuple[Enum, list]]]], with_answers=True) \
+            -> Tuple[List[np.array], List[np.array]]:
+        """
+        :param contexts_and_answers: [(список токенов документа без замаскированных символов, список масок в формате (тип, список токенов)), ...]
+        :param with_answers: добавлять ли в запросы ответ модели с замаскированными словами
+        :return: список массивов токенов запросов для модели, список разметки запросов для CrossEntropy
+        """
         special_ids = set([self.start_infill_id, self.end_infill_id] + list(self.mask_type_to_id.values()))
+        pad_flag = self.max_sent_len is not None and self.pad_flag
+        overlap = 0 if self.overlap is None else self.overlap
         inputs = []
-        markups = []  # Markup for cross-entropy loss
-        longer_than_max_sent_len = 0
+        markups = []  # Markups for cross-entropy loss
         for context, answers in contexts_and_answers:
-            for i in range(0, len(context), self.max_sent_len - self.overlap):
-                token_input = np.zeros((1, self.max_sent_len), dtype=np.uint16)
-                markup = np.full((1, self.max_sent_len), TargetType.PAD.value, dtype=np.uint8)
+            # Find first mask occurrence
+            while answers:
+                context_len, mask_num, last_mask_pos = self._find_the_longest_query(context, answers, with_answers)
+                if mask_num == 0:
+                    context = context[max(context_len - overlap, 1):]
+                    continue
+
                 # Create example
-                example = []
                 # (Masked) Context
                 # Example: She ate <?> for <?>
-                example += context
+                example = context[: context_len]
                 # Context / answer separator
-                context_len = len(example)
                 # Example: <S>
                 example += [self.start_infill_id]
-                # TODO Добавить разделение на последовательности максимальной длины с пересечением
                 if with_answers:
                     # Answers
                     # Example: cereal<E>breakfast<E>
-                    for mask_type, answer in answers:
+                    for mask_type, answer in answers[:mask_num]:
                         example += answer
                         example += [self.end_infill_id]
 
-                if len(example) > self.max_sent_len:
-                    example = example[:self.max_sent_len]
-                    longer_than_max_sent_len += 1
+                assert len(example) <= self.max_sent_len
+
+                full_len = self.max_sent_len if pad_flag else len(example)
+                token_input = np.zeros((1, full_len), dtype=np.uint16)
+                markup = np.full((1, full_len), TargetType.PAD.value, dtype=np.uint8)
 
                 # Find special tokens
                 context_special_idxs = [l for l, t in enumerate(example) if l < context_len and t in special_ids]
                 infill_special_idxs = [l for l, t in enumerate(example) if l > context_len and t in special_ids]
 
                 # Store example in output array
-                if len(example) > 0 and (
-                        min(example) < np.iinfo(inputs.dtype).min or max(example) > np.iinfo(inputs.dtype).max):
-                    raise ValueError('Example cannot be stored in numpy array')
-                inputs[i, :len(example)] = example
+                token_input[0, :len(example)] = example
+                inputs.append(token_input)
 
                 # Store target types in output array
-                tts[i, :context_len] = TargetType.CONTEXT.value
+                markup[0, :context_len] = TargetType.CONTEXT.value
                 for l in context_special_idxs:
-                    tts[i, l] = TargetType.CONTEXT_SPECIAL.value
-                tts[i, context_len:context_len + 1] = TargetType.CONTEXT_INFILL_SEP.value
-                tts[i, context_len + 1:len(example)] = TargetType.INFILL.value
+                    markup[0, l] = TargetType.CONTEXT_SPECIAL.value
+                markup[0, context_len:context_len + 1] = TargetType.CONTEXT_INFILL_SEP.value
+                markup[0, context_len + 1: len(example)] = TargetType.INFILL.value
                 for l in infill_special_idxs:
-                    tts[i, l] = TargetType.INFILL_SPECIAL.value
+                    markup[l] = TargetType.INFILL_SPECIAL.value
+                markups.append(markup)
 
-        print(f'{longer_than_max_sent_len} out of {len(inputs)} examples were longer than sequence length')
-        return inputs, tts
+                # Shift context
+                context = context[max(last_mask_pos + 1, context_len - overlap):]
+                answers = answers[mask_num:]
+
+        return inputs, markups
+
+    def _find_the_longest_query(self, context: List[int], answers: List[Tuple[Enum, List[int]]], with_answer=True):
+        """
+        :param context: список токенов текста (с токенами масок)
+        :param answers: список пропущенных последовательностей в формате (тип, список токенов)
+        :param with_answer: нужно ли добавлять в запрос ответ
+        :return: максимально допустимая длина контекста, количество масок в ней, позиция последней маски в контексте
+        """
+        max_sent_len = 0 if self.max_sent_len is None else self.max_sent_len
+        i, j = 0, 0  # context cursor, answers cursor
+        last_mask_pos = -1
+        query_len = 1
+        for i, token in enumerate(context):
+            query_len += 1
+            if token in self.mask_type_to_id:
+                if with_answer:
+                    answer = answers[j][1]
+                else:
+                    answer = []
+                new_query_len = query_len + len(answer) + 1  # (context + <S> + answers) + answer + <E>
+                if max_sent_len and new_query_len > max_sent_len:
+                    i -= 1
+                    break
+                query_len = new_query_len
+                last_mask_pos = i
+                j += 1
+            query_len += 1
+
+        return i + 1, j, last_mask_pos

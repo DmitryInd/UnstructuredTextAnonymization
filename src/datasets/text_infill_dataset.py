@@ -145,14 +145,16 @@ class TextInfillDataset(Dataset, ABC):
 class RandomMaskTextInfillDataset(TextInfillDataset):
     def __init__(self, path_to_data: str, split: str = None, max_num_documents=0, is_uncased=False,
                  mask_p=None, max_span_len=None,
-                 num_examples=3, max_num_retries=3, min_masked_spans=None, max_masked_spans=None,
+                 max_num_examples=None, num_examples_per_doc=3,
+                 max_num_retries_per_ex=3, min_masked_spans_per_ex=None, max_masked_spans_per_ex=None,
                  pretrained_tokenizer: str = None, max_length=100, overlap=40, eq_max_padding=True,
                  device="cuda:0"):
         self.masker = NgramsMaskFn(mask_p, max_span_len)
-        self.num_examples = num_examples  # per document
-        self.max_num_retries = max_num_retries  # per example
-        self.min_masked_spans = min_masked_spans  # per example
-        self.max_masked_spans = max_masked_spans  # per example
+        self.max_num_examples = max_num_examples
+        self.num_examples_per_doc = num_examples_per_doc  # per document
+        self.max_num_retries_per_ex = max_num_retries_per_ex  # per example
+        self.min_masked_spans_per_ex = min_masked_spans_per_ex  # per example
+        self.max_masked_spans_per_ex = max_masked_spans_per_ex  # per example
         super().__init__(path_to_data, split, max_num_documents, is_uncased, pretrained_tokenizer, max_length, overlap,
                          eq_max_padding, device)
 
@@ -168,6 +170,10 @@ class RandomMaskTextInfillDataset(TextInfillDataset):
                                                                  ensure_nonoverlapping_spans=True,
                                                                  ensure_unique=True)
         print(error_to_count)
+        if self.max_num_examples is not None:
+            example_ids = random.sample(list(range(inputs.shape[0])), max_num_examples)
+            inputs = np.take(inputs, example_ids, axis=0)
+            tts = np.take(tts, example_ids, axis=0)
         return masked_data
 
     @abstractmethod
@@ -202,10 +208,10 @@ class RandomMaskTextInfillDataset(TextInfillDataset):
         doc_masks_set = set()
 
         def mask_acceptable(masked_spans):
-            if self.min_masked_spans is not None and len(masked_spans) < self.min_masked_spans:
+            if self.min_masked_spans_per_ex is not None and len(masked_spans) < self.min_masked_spans_per_ex:
                 return False, 'Too few spans'
 
-            if self.max_masked_spans is not None and len(masked_spans) > self.max_masked_spans:
+            if self.max_masked_spans_per_ex is not None and len(masked_spans) > self.max_masked_spans_per_ex:
                 return False, 'Too many spans'
 
             if ensure_valid_bounds_in_spans and not masked_spans_bounds_valid(masked_spans, len(doc)):
@@ -219,10 +225,10 @@ class RandomMaskTextInfillDataset(TextInfillDataset):
 
             return True, None
 
-        for i in range(self.num_examples):
+        for i in range(self.num_examples_per_doc):
             mask = None
             num_retries = 0
-            while num_retries < self.max_num_retries and mask is None:
+            while num_retries < self.max_num_retries_per_ex and mask is None:
                 try:
                     mask = tuple(self.masker.mask(doc))
                 except Exception as e:
@@ -230,9 +236,9 @@ class RandomMaskTextInfillDataset(TextInfillDataset):
                     mask = None
 
                 if mask is not None:
-                    if (self.max_masked_spans is not None and random_sample_down_to_max
-                            and len(mask) > self.max_masked_spans):
-                        mask = tuple(random.sample(mask, self.max_masked_spans))
+                    if (self.max_masked_spans_per_ex is not None and random_sample_down_to_max
+                            and len(mask) > self.max_masked_spans_per_ex):
+                        mask = tuple(random.sample(mask, self.max_masked_spans_per_ex))
                     mask_is_acceptable, error_msg = mask_acceptable(mask)
                     if not mask_is_acceptable:
                         error_to_count['Issue with example: {}'.format(error_msg)] += 1
