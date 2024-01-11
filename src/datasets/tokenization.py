@@ -6,6 +6,7 @@ from typing import List, Tuple, Set
 
 import numpy as np
 import regex as re
+import torch
 from tokenizers import Tokenizer
 from tokenizers import decoders
 from tokenizers.models import WordPiece
@@ -274,6 +275,24 @@ class OfficialGPT2Tokenizer:
 
         return vocab_size_after
 
+    @staticmethod
+    def align_inputs(token_inputs: List[torch.Tensor], markups: List[torch.Tensor]) \
+            -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Дополняет входные последовательности паддингом до максимальной длины среди них, после чего склеивает в один массив.
+        :param token_inputs: список массивов токенов запросов для модели
+        :param markups: список разметки запросов для CrossEntropy
+        :return: массив токенов запросов для модели, массив разметки запросов для CrossEntropy
+        """
+        full_len = max(map(len, token_inputs))
+        new_token_inputs = torch.zeros((len(token_inputs), full_len), dtype=token_inputs[0].dtype)
+        new_markups = torch.full((len(token_inputs), full_len), TargetType.PAD.value, dtype=markups[0].dtype)
+        for i, token_input, markup in enumerate(zip(token_inputs, markups)):
+            new_token_inputs[i, :len(token_input)] = token_input
+            new_markups[i, :len(markup)] = markup
+
+        return new_token_inputs, new_markups
+
     def __call__(self, text: str, masks: List[List[Tuple[Enum, int, int]]], with_answers=True) \
             -> Tuple[List[np.array], List[np.array]]:
         """
@@ -428,23 +447,23 @@ class OfficialGPT2Tokenizer:
                 assert len(example) <= self.max_sent_len
 
                 full_len = self.max_sent_len if pad_flag else len(example)
-                token_input = np.zeros((1, full_len), dtype=np.uint16)
-                markup = np.full((1, full_len), TargetType.PAD.value, dtype=np.uint8)
+                token_input = np.zeros((full_len, ), dtype=np.uint16)
+                markup = np.full((full_len, ), TargetType.PAD.value, dtype=np.uint8)
 
                 # Find special tokens
                 context_special_idxs = [l for l, t in enumerate(example) if l < context_len and t in special_ids]
                 infill_special_idxs = [l for l, t in enumerate(example) if l > context_len and t in special_ids]
 
                 # Store example in output array
-                token_input[0, :len(example)] = example
+                token_input[:len(example)] = example
                 inputs.append(token_input)
 
                 # Store target types in output array
-                markup[0, :context_len] = TargetType.CONTEXT.value
+                markup[:context_len] = TargetType.CONTEXT.value
                 for l in context_special_idxs:
-                    markup[0, l] = TargetType.CONTEXT_SPECIAL.value
-                markup[0, context_len:context_len + 1] = TargetType.CONTEXT_INFILL_SEP.value
-                markup[0, context_len + 1: len(example)] = TargetType.INFILL.value
+                    markup[l] = TargetType.CONTEXT_SPECIAL.value
+                markup[context_len:context_len + 1] = TargetType.CONTEXT_INFILL_SEP.value
+                markup[context_len + 1: len(example)] = TargetType.INFILL.value
                 for l in infill_special_idxs:
                     markup[l] = TargetType.INFILL_SPECIAL.value
                 markups.append(markup)

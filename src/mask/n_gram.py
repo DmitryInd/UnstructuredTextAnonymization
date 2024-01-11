@@ -15,6 +15,10 @@ class MaskNgramType(Enum):
 
 class NgramsMaskFn(MaskFn):
     def __init__(self, p=0.03, max_ngram_mask_length=8):
+        """
+        :param p: вероятность замаскировать n-грамму, начиная с указанного слова
+        :param max_ngram_mask_length: максимальная длина замаскированной n-граммы
+        """
         try:
             sent_tokenize('Ensure punkt installed.')
         except:

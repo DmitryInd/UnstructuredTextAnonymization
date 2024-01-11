@@ -1,54 +1,44 @@
 import os
 import pickle
-from pathlib import Path
 import random
+from abc import ABC, abstractmethod
+from collections import Counter
+from enum import Enum
+from pathlib import Path
+from typing import Tuple, List
+
+import numpy as np
 import torch
 from torch.utils.data import Dataset
-from typing import Optional, Tuple, List
-from abc import ABC, abstractmethod
-from enum import Enum
 from tqdm import tqdm
-from collections import Counter
-from mask.util import masked_spans_bounds_valid, masked_spans_overlap
-import numpy as np
 
 from datasets.tokenization import OfficialGPT2Tokenizer
 from mask.n_gram import NgramsMaskFn, MaskNgramType
+from mask.util import masked_spans_bounds_valid, masked_spans_overlap
 
 RAW_DATA_DIR = str(Path(__file__).absolute().parents[2] / Path('data') / Path('token'))
 
 
 class DatasetType(Enum):
-    CUSTOM = 0
-    ARXIV_CS_ABSTRACTS = 1
-    ROC_STORIES = 2
-    ROC_STORIES_NO_TITLE = 3
-    I2B2SIX = 4
-    I2B2FOURTEEN = 5
+    ARXIV_CS_ABSTRACTS = 0
+    ROC_STORIES = 1
+    ROC_STORIES_NO_TITLE = 2
+    I2B2SIX = 3
+    I2B2FOURTEEN = 4
 
 
-def get_dataset(dataset, split, *args, data_dir=None, shuffle=False, limit=None, **kwargs):
+def get_dataset(dataset, *args, **kwargs) -> Dataset:
     if not isinstance(dataset, DatasetType):
         raise ValueError('Must specify a Dataset enum value')
 
-    if dataset == DatasetType.CUSTOM:
-        d = custom(split, data_dir)
-        if data_dir is None:
-            raise ValueError('Data dir must be specified for custom dataset')
-    elif dataset == DatasetType.ARXIV_CS_ABSTRACTS:
-        d = arxiv_cs_abstracts(split, *args, data_dir=data_dir, **kwargs)
+    if dataset == DatasetType.ARXIV_CS_ABSTRACTS:
+        d = ArxivRandomMaskTextInfillDataset(*args, **kwargs)
     elif dataset == DatasetType.ROC_STORIES:
-        d = roc_stories(split, *args, data_dir=data_dir, **kwargs)
+        d = StoriesRandomMaskTextInfillDataset(*args, **kwargs)
     elif dataset == DatasetType.ROC_STORIES_NO_TITLE:
-        d = roc_stories(split, *args, data_dir=data_dir, with_titles=False, **kwargs)
+        d = StoriesRandomMaskTextInfillDataset(*args, **kwargs)
     else:
         assert False
-
-    if shuffle:
-        random.shuffle(d)
-
-    if limit is not None:
-        d = d[:limit]
 
     return d
 
@@ -61,7 +51,8 @@ class TextInfillDataset(Dataset, ABC):
         :param path_to_data: путь к директории с данными, которые необходимо предварительно замаскировать, или к размеченному '.pkl' файлу
         :param split: тип среза данных: train, val, test
         :param max_num_examples: максимальное количество документов
-        :param is_uncased: приводить все символы к нижнему регистру или нет
+        :param is_uncased: приводить ли все символы к нижнему регистру или нет
+        :param with_answers: добавлять ли к замаскированному запросу ответы (false, если в данных нет ответов)
         :param pretrained_tokenizer: путь к сохранённым параметрам токенизатора
         :param max_sent_len: максимальное количество токенов в примере
         :param overlap: пересечение последовательных частей предложений
@@ -91,15 +82,17 @@ class TextInfillDataset(Dataset, ABC):
         self._record_ids, self._tokenized_source_list, self._tokenized_target_list = [], [], []
         for record_id, doc, mask_sets in dataset:
             tokenized = self.tokenizer(doc, mask_sets, with_answers)
+            # For saving order of subsequences
             self._record_ids.extend([f"{record_id}:{-i}" for i in range(len(tokenized[0]) - 1, -1, -1)])
             self._tokenized_source_list.extend(tokenized[0])
             self._tokenized_target_list.extend(tokenized[1])
+        if self.max_num_examples is not None:
+            example_ids = random.sample(list(range(len(self._tokenized_source_list))), max_num_examples)
+            self._record_ids = [self._record_ids[x] for x in example_ids]
+            self._tokenized_source_list = [self._tokenized_source_list[x] for x in example_ids]
+            self._tokenized_target_list = [self._tokenized_target_list[x] for x in example_ids]
         self.record2idx = {record_id: i for i, record_id in enumerate(self._record_ids)}
         self._record_ids = np.array(self._record_ids)
-        if self.max_num_examples is not None:
-            example_ids = random.sample(list(range(inputs.shape[0])), max_num_examples)
-            inputs = np.take(inputs, example_ids, axis=0)
-            tts = np.take(tts, example_ids, axis=0)
         self.device = device
 
     @abstractmethod
@@ -129,37 +122,47 @@ class TextInfillDataset(Dataset, ABC):
         if self.eq_max_padding:
             return None
 
-        token_pad_id = self.tokenizer.word2index[self.tokenizer.pad_token]
-        label_pad_id = self.label2index[self.pad_label]
-
         def collate_fn(sample_list):
-            max_len = max(map(len, list(zip(*sample_list))[1]))
-            record_ids, batch_token_ids, batch_label_ids = [], [], []
-            for record_id, token_ids, label_ids in sample_list:
-                record_ids.append(np.expand_dims(record_id, 0))
-                filler = torch.ones(max_len - len(token_ids), dtype=torch.long, device=self.device)
-                batch_token_ids.append(torch.cat((token_ids, filler * token_pad_id)).unsqueeze(0))
-                batch_label_ids.append(torch.cat((label_ids, filler * label_pad_id)).unsqueeze(0))
-            return np.concatenate(record_ids), torch.cat(batch_token_ids), torch.cat(batch_label_ids)
+            # sample_list: [(record_id, token_inputs, label_inputs), ...]
+            record_ids, batch_token_ids, batch_label_ids = zip(*sample_list)
+            batch_token_ids, batch_label_ids = self.tokenizer.align_inputs(sample_list[1], sample_list[2])
+            return np.vstack(tuple(record_ids)), batch_token_ids, batch_label_ids
 
         return collate_fn
 
 
 class RandomMaskTextInfillDataset(TextInfillDataset):
-    def __init__(self, path_to_data: str, split: str = None, max_num_documents=0, is_uncased=False,
-                 mask_p=None, max_span_len=None,
-                 max_num_examples=None, num_examples_per_doc=3,
+    def __init__(self, path_to_data: str, split: str = None, max_num_examples=0, is_uncased=False, with_answers=True,
+                 mask_p=None, max_span_len=None, num_examples_per_doc=3,
                  max_num_retries_per_ex=3, min_masked_spans_per_ex=None, max_masked_spans_per_ex=None,
-                 pretrained_tokenizer: str = None, max_length=100, overlap=40, eq_max_padding=True,
+                 pretrained_tokenizer: str = None, max_sent_len=100, overlap=40, eq_max_padding=True,
                  device="cuda:0"):
+        """
+        :param path_to_data: путь к директории с данными, которые необходимо предварительно замаскировать, или к размеченному '.pkl' файлу
+        :param split: тип среза данных: train, val, test
+        :param max_num_examples: максимальное количество документов
+        :param is_uncased: приводить ли все символы к нижнему регистру или нет
+        :param with_answers: добавлять ли к замаскированному запросу ответы (false, если в данных нет ответов)
+        :param mask_p: вероятность замаскировать n-грамму, начиная с указанного слова
+        :param max_span_len: максимальная длина замаскированной n-граммы
+        :param num_examples_per_doc: количество различных разметок / маскировок одного документа
+        :param max_num_retries_per_ex: количество попыток корректно замаскировать документ для одной разметки
+        :param min_masked_spans_per_ex: минимальное количество масок в одной разметке документа
+        :param max_masked_spans_per_ex: максимальное количество масок в одной разметке документа
+        :param pretrained_tokenizer: путь к сохранённым параметрам токенизатора
+        :param max_sent_len: максимальное количество токенов в примере
+        :param overlap: пересечение последовательных частей предложений
+        :param eq_max_padding: паддинг до максимальной указанной длины для всех примеров или
+                               паддинг до самого длинного примера в батче
+        :param device: устройство, на котором будет исполняться запрос
+        """
         self.masker = NgramsMaskFn(mask_p, max_span_len)
-        self.max_num_examples = max_num_examples
         self.num_examples_per_doc = num_examples_per_doc  # per document
         self.max_num_retries_per_ex = max_num_retries_per_ex  # per example
         self.min_masked_spans_per_ex = min_masked_spans_per_ex  # per example
         self.max_masked_spans_per_ex = max_masked_spans_per_ex  # per example
-        super().__init__(path_to_data, split, max_num_documents, is_uncased, pretrained_tokenizer, max_length, overlap,
-                         eq_max_padding, device)
+        super().__init__(path_to_data, split, max_num_examples, is_uncased, with_answers,
+                         pretrained_tokenizer, max_sent_len, overlap, eq_max_padding, device)
 
     @property
     def _mask_types(self) -> List[Enum]:
@@ -253,101 +256,120 @@ class RandomMaskTextInfillDataset(TextInfillDataset):
         return [list(m) for m in doc_masks], error_to_count
 
 
-def custom(split, data_dir):
-    fp = os.path.join(data_dir, '{}.txt'.format(split))
-    try:
-        with open(fp, 'r') as f:
-            entries = [e.strip() for e in f.read().strip().split('\n\n\n')]
-    except:
-        raise ValueError('Could not load from {}'.format(fp))
-    return entries
-
-
-ABS_DIR = os.path.join(RAW_DATA_DIR, 'arxiv_cs_abstracts')
-
-
-def arxiv_cs_abstracts(split='train', data_dir=None, attrs=None):
-    if attrs is None:
+class ArxivRandomMaskTextInfillDataset(RandomMaskTextInfillDataset):
+    def _read_docs(self, path_to_data: str) -> List[str]:
         attrs = ['title', 'authors', 'categories', 'abstract']
-    assert split in ['train', 'valid', 'test']
+        assert self.split in ['train', 'valid', 'test']
 
-    if data_dir is None:
-        data_dir = ABS_DIR
+        if path_to_data is None:
+            path_to_data = os.path.join(RAW_DATA_DIR, 'arxiv_cs_abstracts')
 
-    with open(os.path.join(data_dir, 'arxiv_cs_abstracts.txt'), 'r') as f:
-        raw = f.read().split('\n\n\n')
+        with open(os.path.join(path_to_data, 'arxiv_cs_abstracts.txt'), 'r') as f:
+            raw = f.read().split('\n\n\n')
 
-    abstracts = []
-    for r in raw:
-        aid, created, updated, categories, title, authors, abstract = r.split('\n', 6)
+        abstracts = []
+        for r in raw:
+            aid, created, updated, categories, title, authors, abstract = r.split('\n', 6)
 
-        a = []
-        for attr_name in attrs:
-            a.append(eval(attr_name))
-        a = '\n'.join(a)
+            a = []
+            for attr_name in attrs:
+                a.append(eval(attr_name))
+            a = '\n'.join(a)
 
-        if created.startswith('2018'):
-            if split == 'valid':
-                abstracts.append(a)
-        elif created.startswith('2019'):
-            if split == 'test':
-                abstracts.append(a)
-        else:
-            if split == 'train':
-                abstracts.append(a)
+            if created.startswith('2018'):
+                if self.split == 'valid':
+                    abstracts.append(a)
+            elif created.startswith('2019'):
+                if self.split == 'test':
+                    abstracts.append(a)
+            else:
+                if self.split == 'train':
+                    abstracts.append(a)
 
-    return abstracts
-
-
-ROC_STORIES_DIR = os.path.join(RAW_DATA_DIR, 'roc_stories')
+        return abstracts
 
 
-def roc_stories(split='train', data_dir=None, with_titles=True, exclude_nonstandard=True):
-    assert split in ['train', 'valid', 'test', 'test_hand_title']
+class StoriesRandomMaskTextInfillDataset(RandomMaskTextInfillDataset):
+    def __init__(self, path_to_data: str, split: str = None, with_titles=True, exclude_nonstandard=True,
+                 max_num_examples=0, is_uncased=False, with_answers=True,
+                 mask_p=None, max_span_len=None, num_examples_per_doc=3,
+                 max_num_retries_per_ex=3, min_masked_spans_per_ex=None, max_masked_spans_per_ex=None,
+                 pretrained_tokenizer: str = None, max_sent_len=100, overlap=40, eq_max_padding=True,
+                 device="cuda:0"):
+        """
+        :param path_to_data: путь к директории с данными, которые необходимо предварительно замаскировать, или к размеченному '.pkl' файлу
+        :param split: тип среза данных: train, val, test
+        :param with_titles: добавлять ли в документы названия рассказов
+        :param exclude_nonstandard: исключать ли рассказы, не подходящие под стандартный шаблон
+        :param max_num_examples: максимальное количество документов
+        :param is_uncased: приводить ли все символы к нижнему регистру или нет
+        :param with_answers: добавлять ли к замаскированному запросу ответы (false, если в данных нет ответов)
+        :param mask_p: вероятность замаскировать n-грамму, начиная с указанного слова
+        :param max_span_len: максимальная длина замаскированной n-граммы
+        :param num_examples_per_doc: количество различных разметок / маскировок одного документа
+        :param max_num_retries_per_ex: количество попыток корректно замаскировать документ для одной разметки
+        :param min_masked_spans_per_ex: минимальное количество масок в одной разметке документа
+        :param max_masked_spans_per_ex: максимальное количество масок в одной разметке документа
+        :param pretrained_tokenizer: путь к сохранённым параметрам токенизатора
+        :param max_sent_len: максимальное количество токенов в примере
+        :param overlap: пересечение последовательных частей предложений
+        :param eq_max_padding: паддинг до максимальной указанной длины для всех примеров или
+                               паддинг до самого длинного примера в батче
+        :param device: устройство, на котором будет исполняться запрос
+        """
+        self.with_titles = with_titles
+        self.exclude_nonstandard = exclude_nonstandard
+        super().__init__(path_to_data, split, max_num_examples, is_uncased, with_answers,
+                         mask_p, max_span_len, num_examples_per_doc,
+                         max_num_retries_per_ex, min_masked_spans_per_ex, max_masked_spans_per_ex,
+                         pretrained_tokenizer, max_sent_len, overlap, eq_max_padding, device)
 
-    if data_dir is None:
-        data_dir = ROC_STORIES_DIR
+    def _read_docs(self, path_to_data: str) -> List[str]:
+        assert self.split in ['train', 'valid', 'test', 'test_hand_title']
 
-    titled = None
-    if split == 'train':
-        with open(os.path.join(data_dir, 'train_title.txt'), 'r') as f:
-            stories = f.read().split('\n\n\n')
-        titled = True
-    elif split == 'valid':
-        with open(os.path.join(data_dir, 'valid.txt'), 'r') as f:
-            stories = f.read().split('\n\n\n')
-        titled = False
-    elif split == 'test':
-        with open(os.path.join(data_dir, 'test.txt'), 'r') as f:
-            stories = f.read().split('\n\n\n')
-        titled = False
-    elif split == 'test_hand_title':
-        with open(os.path.join(data_dir, 'test_hand_title.txt'), 'r') as f:
-            stories = f.read().split('\n\n\n')
-        titled = True
+        if path_to_data is None:
+            path_to_data = os.path.join(RAW_DATA_DIR, 'roc_stories')
 
-    stories = [s.strip() for s in stories if len(s.strip()) > 0]
+        titled = None
+        if self.split == 'train':
+            with open(os.path.join(path_to_data, 'train_title.txt'), 'r') as f:
+                stories = f.read().split('\n\n\n')
+            titled = True
+        elif self.split == 'valid':
+            with open(os.path.join(path_to_data, 'valid.txt'), 'r') as f:
+                stories = f.read().split('\n\n\n')
+            titled = False
+        elif self.split == 'test':
+            with open(os.path.join(path_to_data, 'test.txt'), 'r') as f:
+                stories = f.read().split('\n\n\n')
+            titled = False
+        elif self.split == 'test_hand_title':
+            with open(os.path.join(path_to_data, 'test_hand_title.txt'), 'r') as f:
+                stories = f.read().split('\n\n\n')
+            titled = True
 
-    if with_titles != titled:
-        if with_titles:
-            stories = ['Unknown Title\n{}'.format(s) for s in stories]
-        else:
-            stories = [s.splitlines()[-1] for s in stories]
+        stories = [s.strip() for s in stories if len(s.strip()) > 0]
 
-    if exclude_nonstandard:
-        from nltk.tokenize import sent_tokenize
+        if self.with_titles != titled:
+            if self.with_titles:
+                stories = ['Unknown Title\n{}'.format(s) for s in stories]
+            else:
+                stories = [s.splitlines()[-1] for s in stories]
 
-        standardized = []
-        for s in stories:
-            paragraphs = s.splitlines()
-            if len(paragraphs) != (2 if with_titles else 1):
-                continue
-            try:
-                if len(sent_tokenize(paragraphs[-1])) != 5:
+        if self.exclude_nonstandard:
+            from nltk.tokenize import sent_tokenize
+
+            standardized = []
+            for s in stories:
+                paragraphs = s.splitlines()
+                if len(paragraphs) != (2 if self.with_titles else 1):
                     continue
-            except:
-                raise Exception('Need to call nltk.download(\'punkt\')')
-            standardized.append(s)
-        stories = standardized
+                try:
+                    if len(sent_tokenize(paragraphs[-1])) != 5:
+                        continue
+                except:
+                    raise Exception('Need to call nltk.download(\'punkt\')')
+                standardized.append(s)
+            stories = standardized
 
-    return stories
+        return stories
