@@ -23,8 +23,8 @@ class DatasetType(Enum):
     ARXIV_CS_ABSTRACTS = 0
     ROC_STORIES = 1
     ROC_STORIES_NO_TITLE = 2
-    I2B2SIX = 3
-    I2B2FOURTEEN = 4
+    I2B2SIX = 3  # TODO Добавить класс датасета
+    I2B2FOURTEEN = 4  # TODO Добавить класс датасета
 
 
 def get_dataset(dataset, *args, **kwargs) -> Dataset:
@@ -36,6 +36,7 @@ def get_dataset(dataset, *args, **kwargs) -> Dataset:
     elif dataset == DatasetType.ROC_STORIES:
         d = StoriesRandomMaskTextInfillDataset(*args, **kwargs)
     elif dataset == DatasetType.ROC_STORIES_NO_TITLE:
+        kwargs['with_titles'] = False
         d = StoriesRandomMaskTextInfillDataset(*args, **kwargs)
     else:
         assert False
@@ -156,6 +157,7 @@ class RandomMaskTextInfillDataset(TextInfillDataset):
                                паддинг до самого длинного примера в батче
         :param device: устройство, на котором будет исполняться запрос
         """
+        # TODO Добавить возможность размечать случайными именованными метками
         self.masker = NgramsMaskFn(mask_p, max_span_len)
         self.num_examples_per_doc = num_examples_per_doc  # per document
         self.max_num_retries_per_ex = max_num_retries_per_ex  # per example
