@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Iterable, Dict
 
 from base import MaskFn
 from n_gram import NgramsMaskFn
@@ -125,32 +125,13 @@ def align_charspan_to_tokenspan(x, x_tok, char_offset, char_len) -> Tuple[int, i
     return char_offset, char_len, token_offset, token_len
 
 
-def apply_masked_spans(doc_str_or_token_list, masked_spans, mask_type_to_substitution):
-    # TODO Возможно, эту функцию можно удалить
-    if isinstance(doc_str_or_token_list, str):
-        context, answers = _apply_masked_spans(
-            list(doc_str_or_token_list),
-            masked_spans,
-            {k: list(v) for k, v in mask_type_to_substitution.items()})
-        context = ''.join(context)
-        answers = [(t, ''.join(s)) for t, s in answers]
-        return context, answers
-    elif isinstance(doc_str_or_token_list, list):
-        return _apply_masked_spans(
-            doc_str_or_token_list,
-            masked_spans,
-            mask_type_to_substitution)
-    else:
-        raise ValueError()
-
-
-def _apply_masked_spans(doc: List[int], masked_spans: List[Tuple[Enum, int, int]],
-                        mask_type_to_substitution: dict) -> Tuple[list, List[Tuple[Enum, list]]]:
+def apply_masked_spans(doc: List[int], masked_spans: List[Tuple[Enum, int, int]],
+                       mask_type_to_substitution: Dict[Enum, int]) -> Tuple[list, List[Tuple[Enum, list]]]:
     """
-    Заменяет текст замаскированных отрезков на маскировочные токены
-    :param doc: текст в формате списка токенов
+    Заменяет токены маскируемых отрезков на маскировочные токены
+    :param doc: текст в формате списка id токенов
     :param masked_spans: список замаскированных отрезков текста в формате (тип, сдвиг, длина)
-    :param mask_type_to_substitution: словарь маскировочных токенов для каждого типа маски
+    :param mask_type_to_substitution: словарь id маскировочных токенов для каждого типа маски
     :return: (контекст с убранным замаскированным текстом, список замаскированных отрезков: (тип, список токенов))
     """
     if None in doc:
@@ -177,28 +158,25 @@ def _apply_masked_spans(doc: List[int], masked_spans: List[Tuple[Enum, int, int]
         assert all([i is None for i in context[span_off:span_off + span_len]])
         del context[span_off:span_off + span_len]
         substitution = mask_type_to_substitution[span_type]
-        if isinstance(substitution, list):
-            context[span_off:span_off] = substitution
-        else:
-            context.insert(span_off, substitution)
+        context.insert(span_off, substitution)
     assert None not in context
 
     return context, answers
 
 
-def tokens_offsets(x, x_tok) -> List[int]:
+def tokens_offsets(x: str, x_tok: Iterable[str]) -> List[int]:
     """
     Ищет позиции токенов, на которые делится строка.
     :param x: строка текста
     :param x_tok: текстовые токены, на которые делится строка
     :return:
     """
-    if type(x_tok) != tuple:
+    if not isinstance(x_tok, tuple):
         x_tok = tuple(x_tok)
     return _tokens_offsets_and_residuals_memorized(x, x_tok)[0]
 
 
-def _tokens_offsets_and_residuals_memorized(x, x_tok) -> Tuple[List[int], List[str], str]:
+def _tokens_offsets_and_residuals_memorized(x: str, x_tok: Tuple[str]) -> Tuple[List[int], List[str], str]:
     """
     Исследует, как текст был разбит на токены.
     :param x: строка текста

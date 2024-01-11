@@ -10,7 +10,9 @@ from enum import Enum
 from tqdm import tqdm
 from collections import Counter
 from mask.util import masked_spans_bounds_valid, masked_spans_overlap
+import numpy as np
 
+from datasets.tokenization import OfficialGPT2Tokenizer
 from mask.n_gram import NgramsMaskFn, MaskNgramType
 
 RAW_DATA_DIR = str(Path(__file__).absolute().parents[2] / Path('data') / Path('token'))
@@ -52,16 +54,16 @@ def get_dataset(dataset, split, *args, data_dir=None, shuffle=False, limit=None,
 
 
 class TextInfillDataset(Dataset, ABC):
-    def __init__(self, path_to_data: str, split: str = None, max_num_documents=0, is_uncased=False,
-                 pretrained_tokenizer: str = None, max_length=100, overlap=40, eq_max_padding=True,
+    def __init__(self, path_to_data: str, split: str = None, max_num_examples=0, is_uncased=False, with_answers=True,
+                 pretrained_tokenizer: str = None, max_sent_len=100, overlap=40, eq_max_padding=True,
                  device="cuda:0"):
         """
         :param path_to_data: путь к директории с данными, которые необходимо предварительно замаскировать, или к размеченному '.pkl' файлу
         :param split: тип среза данных: train, val, test
-        :param max_num_documents: максимальное количество документов
+        :param max_num_examples: максимальное количество документов
         :param is_uncased: приводить все символы к нижнему регистру или нет
         :param pretrained_tokenizer: путь к сохранённым параметрам токенизатора
-        :param max_length: максимальное количество токенов в примере
+        :param max_sent_len: максимальное количество токенов в примере
         :param overlap: пересечение последовательных частей предложений
         :param eq_max_padding: паддинг до максимальной указанной длины для всех примеров или
                                паддинг до самого длинного примера в батче
@@ -73,7 +75,7 @@ class TextInfillDataset(Dataset, ABC):
         self.pad_label = "[PAD]"
         # Start of reading files
         self.split = split
-        self.max_num_documents = max_num_documents
+        self.max_num_examples = max_num_examples
         self.is_uncased = is_uncased
         self.eq_max_padding = eq_max_padding
         if Path(path_to_data).suffix != '.pkl':
@@ -83,20 +85,21 @@ class TextInfillDataset(Dataset, ABC):
                 pickle.dump(masked_data, f)
         # [(текст документа, список наборов масок для него: [[(тип, сдвиг, длина), ...], ...]), ...]
         dataset = pickle.load(f)
-
         # Data tokenization
-        self.tokenizer = WordPieceTokenizer(tokenized_source_list,
-                                            self.label2index[self.pad_label], pad_flag=eq_max_padding,
-                                            max_sent_len=max_length, overlap=overlap,
-                                            pretrained_name=pretrained_tokenizer)
+        self.tokenizer = OfficialGPT2Tokenizer(pretrained_tokenizer, self._mask_types,
+                                               max_sent_len=max_sent_len, overlap=overlap, pad_flag=eq_max_padding)
         self._record_ids, self._tokenized_source_list, self._tokenized_target_list = [], [], []
-        for record_id, sentence, labels in zip(record_ids, tokenized_source_list, tokenized_target_list):
-            tokenized = self.tokenizer(sentence, labels)
+        for record_id, doc, mask_sets in dataset:
+            tokenized = self.tokenizer(doc, mask_sets, with_answers)
             self._record_ids.extend([f"{record_id}:{-i}" for i in range(len(tokenized[0]) - 1, -1, -1)])
             self._tokenized_source_list.extend(tokenized[0])
             self._tokenized_target_list.extend(tokenized[1])
         self.record2idx = {record_id: i for i, record_id in enumerate(self._record_ids)}
         self._record_ids = np.array(self._record_ids)
+        if self.max_num_examples is not None:
+            example_ids = random.sample(list(range(inputs.shape[0])), max_num_examples)
+            inputs = np.take(inputs, example_ids, axis=0)
+            tts = np.take(tts, example_ids, axis=0)
         self.device = device
 
     @abstractmethod
@@ -105,11 +108,11 @@ class TextInfillDataset(Dataset, ABC):
         pass
 
     @abstractmethod
-    def _read_data(self, path_to_data: str) -> Tuple[List[int], List[List[str]], List[List[str]]]:
+    def _read_data(self, path_to_data: str) -> List[Tuple[int, str, List[List[Tuple[MaskNgramType, int, int]]]]]:
         """
         Считывает данные и возвращает их в формате: текст документа и список наборов масок для него
         :param path_to_data: путь до директории с данными в формате строки
-        :return:  [(текст документа, список наборов масок для него: [[(тип, сдвиг, длина), ...], ...]), ...]
+        :return:  [(индекс документа, текст документа, список наборов масок для него: [[(тип, сдвиг, длина), ...], ...]), ...]
         """
         pass
 
@@ -162,19 +165,16 @@ class RandomMaskTextInfillDataset(TextInfillDataset):
     def _mask_types(self) -> List[Enum]:
         return self.masker.mask_types()
 
-    def _read_data(self, path_to_data: str) -> List[Tuple[str, List[List[Tuple[MaskNgramType, int, int]]]]]:
+    def _read_data(self, path_to_data: str) -> List[Tuple[int, str, List[List[Tuple[MaskNgramType, int, int]]]]]:
         docs = self._read_docs(path_to_data)
         masked_data, error_to_count = self.randomly_mask_dataset(docs,
                                                                  random_sample_down_to_max=True,
                                                                  ensure_valid_bounds_in_spans=True,
                                                                  ensure_nonoverlapping_spans=True,
                                                                  ensure_unique=True)
-        print(error_to_count)
-        if self.max_num_examples is not None:
-            example_ids = random.sample(list(range(inputs.shape[0])), max_num_examples)
-            inputs = np.take(inputs, example_ids, axis=0)
-            tts = np.take(tts, example_ids, axis=0)
-        return masked_data
+        print(f'There were next errors in random masking dataset:\n{error_to_count}')
+        masked_data_with_id = [(i, t, m) for i, (t, m) in enumerate(masked_data)]
+        return masked_data_with_id
 
     @abstractmethod
     def _read_docs(self, path_to_data: str) -> List[str]:
