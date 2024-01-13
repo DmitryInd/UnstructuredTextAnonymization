@@ -4,6 +4,9 @@ from typing import List
 
 
 class MaskFn(ABC):
+    """
+    Класс для поиска/генерации масок, скрывающих частей исходного текста
+    """
     @staticmethod
     @abstractmethod
     def mask_types() -> List[Enum]:

@@ -83,6 +83,8 @@ class TextInfillDataset(Dataset, ABC):
                                                max_sent_len=max_sent_len, overlap=overlap, pad_flag=eq_max_padding)
         self._record_ids, self._tokenized_source_list, self._tokenized_target_list = [], [], []
         for record_id, doc, mask_sets in dataset:
+            if self.is_uncased:
+                doc = doc.lower()
             tokenized = self.tokenizer(doc, mask_sets, with_answers)
             # For saving order of subsequences
             self._record_ids.extend([f"{record_id}:{-i}" for i in range(len(tokenized[0]) - 1, -1, -1)])
@@ -380,7 +382,7 @@ class StoriesRandomMaskTextInfillDataset(RandomMaskTextInfillDataset):
 
 class MarkedUpTextInfillDataset(TextInfillDataset):
     def __init__(self, path_to_data: str, split: str = None, max_num_examples=0,
-                 is_uncased=False, with_answers=True, other_label: str = '0', label2type = None,
+                 is_uncased=False, with_answers=True, other_label: str = '0', label2type=None,
                  pretrained_tokenizer: str = None, max_sent_len=100, overlap=40, eq_max_padding=True,
                  device="cuda:0"):
         """
@@ -432,7 +434,7 @@ class MarkedUpTextInfillDataset(TextInfillDataset):
             if label != self.other_label:
                 masks.append((self._get_type(label), len(text), len(subseq)))
             text += subseq + " "
-        return doc[0], text, [masks]
+        return doc[0], text[:-1], [masks]
 
 
 class FromListMarkedUpTextInfillDataset(MarkedUpTextInfillDataset):

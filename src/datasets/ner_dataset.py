@@ -83,19 +83,25 @@ class NerDataset(Dataset, ABC):
         self.index2label = list(list(zip(*label_aliases))[0]) + [self.pad_label]
         self.label2index = {label: i for i, label in enumerate(self.index2label)}
         # Start of reading files
-        self.anonymization = anonymization if anonymization is not None else lambda _1, _2, x: x
         self.is_uncased = is_uncased
         self.eq_max_padding = eq_max_padding
         record_ids = []
+        # For anonymization
+        specific_category_list = []
+        general_category_list = []
+        # Dataset values
         tokenized_source_list = []
         tokenized_target_list = []
         for xml_file in path.glob("*." + self.file_extension):
             ids_batch, source_batch, target_batch = self._read_file(str(xml_file))
             record_ids.extend(ids_batch)
             tokenized_source_list.extend(source_batch)
-            for labels in target_batch:
-                tokenized_target_list.append([self.label2index[label] for label in labels])
-        # TODO: перенести обезличивание сюда
+            specific_category_list.extend(target_batch)
+            for aliases in target_batch:
+                general_category_list.append([self.alias2label.get(alias, self.other_label) for alias in aliases])
+                tokenized_target_list.append([self.label2index[label] for label in general_category_list[-1]])
+        if anonymization is not None:
+            tokenized_source_list = anonymization(general_category_list, specific_category_list, tokenized_source_list)
         # Data tokenization
         self.tokenizer = WordPieceTokenizer(tokenized_source_list,
                                             self.label2index[self.pad_label], pad_flag=eq_max_padding,
@@ -172,9 +178,8 @@ class I2b2SixNerDataset(NerDataset):
             text = record.find('TEXT')
             for child in text.iter():
                 if child.tag == 'PHI':
-                    label = self.alias2label.get(child.get("TYPE"), self.other_label)
-                    source_words.append(self.anonymization(label, child.get("TYPE"), child.text))
-                    target_labels.append(label)
+                    source_words.append(child.text)
+                    target_labels.append(child.get("TYPE"))
                     if child.tail is not None:
                         source_words.append(child.tail)
                         target_labels.append(self.other_label)
@@ -215,10 +220,8 @@ class I2b2FourteenNerDataset(NerDataset):
             if start > current_pos:
                 source_words.append(text[current_pos:start])
                 target_labels.append(self.other_label)
-            label = self.alias2label.get(child.get("TYPE"), self.other_label)
-            source_words.append(self.anonymization(label, self._phi_type_conversion(child.get("TYPE")),
-                                                   child.get("text")))
-            target_labels.append(label)
+            source_words.append(child.get("text"))
+            target_labels.append(self._phi_type_conversion(child.get("TYPE")))
             current_pos = int(child.get("end"))
         if current_pos < len(text):
             source_words.append(text[current_pos:])
