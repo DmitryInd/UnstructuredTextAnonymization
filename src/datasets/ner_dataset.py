@@ -120,7 +120,7 @@ class NerDataset(Dataset, ABC):
     def _read_file(self, path_to_file: str) -> Tuple[List[int], List[List[str]], List[List[str]]]:
         """
         :param path_to_file: путь до файла в формате строки
-        :return: ([id документа/записи, ...], [List подряд идущих слов с одной меткой, ...], [Метка, ...])
+        :return: ([id документа/записи, ...], [List[подряд идущих слов с одной меткой], ...], [List[Метка], ...])
         """
         pass
 

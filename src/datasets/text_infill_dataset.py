@@ -14,6 +14,7 @@ from tqdm import tqdm
 
 from datasets.tokenization import OfficialGPT2Tokenizer
 from mask.n_gram import NgramsMaskFn, MaskNgramType
+from mask.personal_entity import PersonalEntityMaskFn, MaskEntityType
 from mask.util import masked_spans_bounds_valid, masked_spans_overlap
 
 RAW_DATA_DIR = str(Path(__file__).absolute().parents[2] / Path('data') / Path('token'))
@@ -375,3 +376,100 @@ class StoriesRandomMaskTextInfillDataset(RandomMaskTextInfillDataset):
             stories = standardized
 
         return stories
+
+
+class MarkedUpTextInfillDataset(TextInfillDataset):
+    def __init__(self, path_to_data: str, split: str = None, max_num_examples=0,
+                 is_uncased=False, with_answers=True, other_label: str = '0', label2type = None,
+                 pretrained_tokenizer: str = None, max_sent_len=100, overlap=40, eq_max_padding=True,
+                 device="cuda:0"):
+        """
+        :param path_to_data: путь к директории с данными, которые необходимо предварительно замаскировать, или к размеченному '.pkl' файлу
+        :param split: тип среза данных: train, val, test
+        :param max_num_examples: максимальное количество документов
+        :param is_uncased: приводить ли все символы к нижнему регистру или нет
+        :param with_answers: добавлять ли к замаскированному запросу ответы (false, если в данных нет ответов)
+        :param other_label: метка для неперсональных данных
+        :param label2type: функция для конвертации названия метки в enum тип маски
+        :param pretrained_tokenizer: путь к сохранённым параметрам токенизатора
+        :param max_sent_len: максимальное количество токенов в примере
+        :param overlap: пересечение последовательных частей предложений
+        :param eq_max_padding: паддинг до максимальной указанной длины для всех примеров или
+                               паддинг до самого длинного примера в батче
+        :param device: устройство, на котором будет исполняться запрос
+        """
+        self.other_label = other_label
+        self._get_type = label2type if label2type is not None else get_ngram_type
+        super().__init__(path_to_data, split, max_num_examples, is_uncased, with_answers,
+                         pretrained_tokenizer, max_sent_len, overlap, eq_max_padding, device)
+
+    @property
+    def _mask_types(self) -> List[Enum]:
+        return list(MaskNgramType)
+
+    def _read_data(self, path_to_data: str) -> List[Tuple[int, str, List[List[Tuple[Enum, int, int]]]]]:
+        docs = self._read_docs(path_to_data)
+        masked_data = []
+        for doc in zip(*docs):
+            masked_data.append(self.convert_dataset(doc))
+        return masked_data
+
+    @abstractmethod
+    def _read_docs(self, path_to_data: str) -> Tuple[List[int], List[List[str]], List[List[str]]]:
+        pass
+
+    def convert_dataset(self, doc: Tuple[int, List[str], List[str]]) \
+            -> Tuple[int, str, List[List[Tuple[Enum, int, int]]]]:
+        """
+        Переводит представление документа\n
+        из формата: (id документа, список слов в документе, список классов/меток слов в документе)\n
+        в формат: (id документа, текст документа в формате строки,
+        (тип замаскированного объекта, сдвиг на начало замаскированного объекта, длина замаскированного объекта))
+        """
+        masks = []
+        text = ""
+        for subseq, label in zip(doc[1], doc[2]):
+            if label != self.other_label:
+                masks.append((self._get_type(label), len(text), len(subseq)))
+            text += subseq + " "
+        return doc[0], text, [masks]
+
+
+class FromListMarkedUpTextInfillDataset(MarkedUpTextInfillDataset):
+    def __init__(self, path_to_data: str, marked_up_docs: Tuple[List[int], List[List[str]], List[List[str]]],
+                 split: str = None, max_num_examples=0,
+                 is_uncased=False, with_answers=True, other_label: str = '0', label2type=None,
+                 pretrained_tokenizer: str = None, max_sent_len=100, overlap=40, eq_max_padding=True,
+                 device="cuda:0"):
+        """
+        :param path_to_data: путь к директории с данными, которые необходимо предварительно замаскировать, или к размеченному '.pkl' файлу
+        :param marked_up_docs: размеченные данные в формате (id документа, список слов в документе, список классов/меток слов в документе)
+        :param split: тип среза данных: train, val, test
+        :param max_num_examples: максимальное количество документов
+        :param is_uncased: приводить ли все символы к нижнему регистру или нет
+        :param with_answers: добавлять ли к замаскированному запросу ответы (false, если в данных нет ответов)
+        :param other_label: метка для неперсональных данных
+        :param label2type: функция для конвертации названия метки в enum тип маски
+        :param pretrained_tokenizer: путь к сохранённым параметрам токенизатора
+        :param max_sent_len: максимальное количество токенов в примере
+        :param overlap: пересечение последовательных частей предложений
+        :param eq_max_padding: паддинг до максимальной указанной длины для всех примеров или
+                               паддинг до самого длинного примера в батче
+        :param device: устройство, на котором будет исполняться запрос
+        """
+        self.marked_up_docs = marked_up_docs
+        super().__init__(path_to_data, split, max_num_examples, is_uncased, with_answers, other_label, label2type,
+                         pretrained_tokenizer, max_sent_len, overlap, eq_max_padding, device)
+
+    def _read_docs(self, path_to_data: str) -> Tuple[List[int], List[List[str]], List[List[str]]]:
+        return self.marked_up_docs
+
+
+def get_ngram_type(label: str) -> Enum:
+    """Независимо от названия метки в формате строки возвращает Ngram тип маски"""
+    return MaskNgramType.NGRAM
+
+
+def get_personal_entity_type(label: str) -> Enum:
+    """Из метки [подстроки] в формате строки получает тип маски для именованных сущностей с личной информацией"""
+    return MaskEntityType[label.upper()]
