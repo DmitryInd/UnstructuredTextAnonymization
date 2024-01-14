@@ -1,11 +1,14 @@
 from typing import List
 
+from torch.utils.data import DataLoader
+
 from anonymization.base import Anonymization
 from datasets.text_infill_dataset import FromListMarkedUpTextInfillDataset, get_ngram_type
+from models.gpt2_model import PretrainedGPT2TextInfilling
 
 
 class GPT2GenerationAnonymization(Anonymization):
-    def __init__(self, model, path_to_cashed_data='./data/token/cashed_for_gpt2_anon',
+    def __init__(self, model: PretrainedGPT2TextInfilling, path_to_cashed_data='./data/token/cashed_for_gpt2_anon',
                  other_label='O', is_uncased=False,
                  pretrained_tokenizer: str = None, max_sent_len=768, overlap=True, eq_max_padding=True,
                  device: str = None):
@@ -31,4 +34,20 @@ class GPT2GenerationAnonymization(Anonymization):
             self.pretrained_tokenizer, self.max_sent_len, self.overlap, self.eq_max_padding,
             self.device
         )
-        # TODO
+        dataloader = DataLoader(
+            dataset,
+            batch_size=24,
+            shuffle=False,
+            num_workers=10,
+            pin_memory=False,
+            persistent_workers=True
+        )
+        record_ids = []
+        predictions = []
+        self.model.eval()
+        for batch in dataloader:
+            local_record_ids, inputs, tts = batch  # B, L
+            hard_preds = self.model.inference(inputs, tts)
+            # TODO Оставить только ответы
+            predictions.extend([dataset.tokenizer.decode(list(pred)) for pred in hard_preds])
+        # TODO Добавить ответы в изначальный текст
