@@ -190,11 +190,15 @@ class OfficialGPT2Tokenizer:
     """
 
     def __init__(self, tokenizer_dir, mask_types: List[Enum], errors='replace',
-                 max_sent_len: int = None, overlap: int = None, pad_flag: bool = True):
+                 max_sent_len: int = None, overlap: int = None, pad_flag: bool = True, padding_len=None):
         """
         :param tokenizer_dir: директория с сохранёнными параметрами токенизаторов
         :param mask_types: типы масок, содержащихся во входных данных
         :param errors: способ обработки ошибок
+        :param max_sent_len: максимальное количество токенов в примере
+        :param overlap: пересечение последовательных частей предложений
+        :param pad_flag: дополнять ли все примеры паддингом до padding_len | max_sent_len
+        :param padding_len: длина, до которой дополняются паддингом все примеры без ответов
         """
         # Load pretrained tokenizer for GPT2
         with open(Path(tokenizer_dir) / Path('official_gpt2_encoder/encoder.json'), 'r') as f:
@@ -222,6 +226,7 @@ class OfficialGPT2Tokenizer:
         self.max_sent_len = max_sent_len  # 1024
         self.overlap = overlap
         self.pad_flag = pad_flag
+        self.padding_len = padding_len if padding_len is not None else max_sent_len
         if max_sent_len is not None:
             self.overlap = max_sent_len // 4 if overlap is None else overlap
 
@@ -446,7 +451,9 @@ class OfficialGPT2Tokenizer:
 
                 assert len(example) <= self.max_sent_len
 
-                full_len = self.max_sent_len if pad_flag else len(example)
+                full_len = len(example)
+                if pad_flag:
+                    full_len = self.max_sent_len if with_answers else self.padding_len
                 token_input = np.zeros((full_len, ), dtype=np.uint16)
                 markup = np.full((full_len, ), TargetType.PAD.value, dtype=np.uint8)
 
