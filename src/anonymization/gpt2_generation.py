@@ -42,12 +42,12 @@ class GPT2GenerationAnonymization(Anonymization):
             pin_memory=False,
             persistent_workers=True
         )
-        record_ids = []
         predictions = []
         self.model.eval()
         for batch in dataloader:
-            local_record_ids, inputs, tts = batch  # B, L
-            hard_preds = self.model.inference(inputs, tts)
-            # TODO Оставить только ответы
-            predictions.extend([dataset.tokenizer.decode(list(pred)) for pred in hard_preds])
+            _, inputs, tts = batch  # B, L
+            outputs = self.model.inference(inputs, tts)
+            for pred in outputs:
+                start = list(pred).index(dataset.tokenizer.start_infill_id) + 1
+                predictions.append(dataset.tokenizer.decode(list(pred[start:])))
         # TODO Добавить ответы в изначальный текст

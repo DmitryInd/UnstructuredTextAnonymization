@@ -8,7 +8,8 @@ from transformers import GPT2LMHeadModel
 
 class PretrainedGPT2TextInfilling(pl.LightningModule):
     def __init__(self, pretrained_name: str, vocab_size: int, train_context,
-                 lr: float, total_steps: int, adaptation_part: int, div_factor: int):
+                 lr: float, total_steps: int, adaptation_part: int, div_factor: int,
+                 end_fill_id=None):
         """
         :param pretrained_name: название предобученной GPT2 модели из hugging face hub
         :param vocab_size: итоговый размер словаря (с добавлением или удалением части токенов)
@@ -30,6 +31,8 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         self.total_steps = total_steps
         self.adaptation_part = adaptation_part
         self.train_context = train_context
+
+        self.end_fill_id = end_fill_id
 
     def forward(self, x):
         x = self.model(x)  # B, L, C
@@ -99,13 +102,24 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         # self.log('val_cer', self.val_cer, on_step=False, on_epoch=True, logger=True, prog_bar=True)
 
     @torch.no_grad()
-    def inference(self, inputs, tts):
-        # B, L
-        logits, _ = self.model(inputs)  # B, L, C
-        hard_pred = torch.argmax(logits, dim=-1)
-        # TODO Добавить повторный запуск модели, если она не заполнила все пропуски
+    def inference(self, inputs: torch.Tensor, tts: torch.Tensor):
+        masks_number = (tts != TargetType.CONTEXT_SPECIAL.value).sum(dim=0)
+        positions = (tts != TargetType.PAD.value).sum(dim=0)
+        finished = set()
+        while len(finished) < inputs.shape[0]:
+            logits, _ = self.model(inputs)  # B, L, C
+            hard_pred = torch.argmax(logits, dim=-1)
+            for i, row in enumerate(hard_pred):
+                pos = positions[i]
+                if pos >= inputs.shape[1] or masks_number[i] <= 0:
+                    finished.add(i)
+                    continue
+                inputs[i, pos] = row[pos]
+                if row[pos] == self.end_infill_id:
+                    masks_number[i] -= 1
+                pos += 1
 
-        return hard_pred
+        return inputs
 
     @staticmethod
     def tts_to_labels(inputs, tts, label_tts):
