@@ -189,10 +189,10 @@ class OfficialGPT2Tokenizer:
     я заменю текущее решение на класс из указанной библиотеки.
     """
 
-    def __init__(self, tokenizer_dir, mask_types: List[Enum], errors='replace',
+    def __init__(self, pretrained_path, mask_types: List[Enum], errors='replace',
                  max_sent_len: int = None, overlap: int = None, pad_flag: bool = True, padding_len=None):
         """
-        :param tokenizer_dir: директория с сохранёнными параметрами токенизаторов
+        :param pretrained_path: директория с сохранёнными параметрами токенизаторов
         :param mask_types: типы масок, содержащихся во входных данных
         :param errors: способ обработки ошибок
         :param max_sent_len: максимальное количество токенов в примере
@@ -201,9 +201,9 @@ class OfficialGPT2Tokenizer:
         :param padding_len: длина, до которой дополняются паддингом все примеры без ответов
         """
         # Load pretrained tokenizer for GPT2
-        with open(Path(tokenizer_dir) / Path('official_gpt2_encoder/encoder.json'), 'r') as f:
+        with open(Path(pretrained_path) / Path('encoder.json'), 'r') as f:
             encoder = json.load(f)
-        with open(Path(tokenizer_dir) / Path('official_gpt2_encoder/vocab.bpe'), 'r', encoding="utf-8") as f:
+        with open(Path(pretrained_path) / Path('vocab.bpe'), 'r', encoding="utf-8") as f:
             bpe_data = f.read()
         bpe_merges = [tuple(merge_str.split()) for merge_str in bpe_data.split('\n')[1:-1]]
         # Tokenizer main entities
@@ -454,8 +454,8 @@ class OfficialGPT2Tokenizer:
                 full_len = len(example)
                 if pad_flag:
                     full_len = self.max_sent_len if with_answers else self.padding_len
-                token_input = np.zeros((full_len, ), dtype=np.uint16)
-                markup = np.full((full_len, ), TargetType.PAD.value, dtype=np.uint8)
+                token_input = np.zeros((full_len, ))
+                markup = np.full((full_len, ), TargetType.PAD.value)
 
                 # Find special tokens
                 context_special_idxs = [l for l, t in enumerate(example) if l < context_len and t in special_ids]
@@ -494,7 +494,7 @@ class OfficialGPT2Tokenizer:
         query_len = 1
         for i, token in enumerate(context):
             query_len += 1
-            if token in self.mask_type_to_id:
+            if token in self.mask_type_to_id.values():
                 if with_answer:
                     answer = answers[j][1]
                 else:
@@ -509,3 +509,7 @@ class OfficialGPT2Tokenizer:
             query_len += 1
 
         return i + 1, j, last_mask_pos
+
+    @property
+    def vocab_size(self):
+        return len(self.encoder)

@@ -5,8 +5,8 @@ from typing import List, Tuple
 
 from nltk import sent_tokenize, word_tokenize as nltk_word_tokenize
 
-from base import MaskFn
-from util import tokens_offsets
+from mask.base import MaskFn
+from mask.util import tokens_offsets
 
 
 class MaskNgramType(Enum):

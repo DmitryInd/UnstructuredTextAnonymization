@@ -1,0 +1,16 @@
+dataset_type: "roc_stories_no_title"
+path_to_data: "data/token/roc_stories.pkl"
+is_uncased: True
+mask_p: 0.03
+max_span_len: 8
+max_num_train_examples: 1024
+max_num_valid_examples: 512
+num_examples_per_doc: 1
+max_num_retries_per_ex: 3
+min_masked_spans_per_ex: 1
+max_masked_spans_per_ex: 5
+pretrained_tokenizer: "data/tokenizer/official_gpt2_encoder"
+max_sent_len: 256
+overlap: 32
+
+batch_size: 8

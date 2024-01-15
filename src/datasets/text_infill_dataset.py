@@ -20,33 +20,8 @@ from mask.util import masked_spans_bounds_valid, masked_spans_overlap
 RAW_DATA_DIR = str(Path(__file__).absolute().parents[2] / Path('data') / Path('token'))
 
 
-class DatasetType(Enum):
-    ARXIV_CS_ABSTRACTS = 0
-    ROC_STORIES = 1
-    ROC_STORIES_NO_TITLE = 2
-    I2B2SIX = 3  # TODO Добавить класс датасета
-    I2B2FOURTEEN = 4  # TODO Добавить класс датасета
-
-
-def get_dataset(dataset, *args, **kwargs) -> Dataset:
-    if not isinstance(dataset, DatasetType):
-        raise ValueError('Must specify a Dataset enum value')
-
-    if dataset == DatasetType.ARXIV_CS_ABSTRACTS:
-        d = ArxivRandomMaskTextInfillDataset(*args, **kwargs)
-    elif dataset == DatasetType.ROC_STORIES:
-        d = StoriesRandomMaskTextInfillDataset(*args, **kwargs)
-    elif dataset == DatasetType.ROC_STORIES_NO_TITLE:
-        kwargs['with_titles'] = False
-        d = StoriesRandomMaskTextInfillDataset(*args, **kwargs)
-    else:
-        assert False
-
-    return d
-
-
 class TextInfillDataset(Dataset, ABC):
-    def __init__(self, path_to_data: str, split: str = None, max_num_examples=0, is_uncased=False, with_answers=True,
+    def __init__(self, path_to_data: str, split: str = None, max_num_examples=None, is_uncased=False, with_answers=True,
                  pretrained_tokenizer: str = None, max_sent_len=1024, overlap=256, eq_max_padding=True, padding_len=None,
                  device="cuda:0"):
         """
@@ -78,13 +53,14 @@ class TextInfillDataset(Dataset, ABC):
             with open(path_to_data, 'wb') as f:
                 pickle.dump(masked_data, f)
         # [(текст документа, список наборов масок для него: [[(тип, сдвиг, длина), ...], ...]), ...]
-        dataset = pickle.load(f)
+        with open(path_to_data, 'rb') as f:
+            dataset = pickle.load(f)
         # Data tokenization
-        self.tokenizer = OfficialGPT2Tokenizer(pretrained_tokenizer, self._mask_types,
-                                               max_sent_len=max_sent_len, overlap=overlap,
-                                               pad_flag=eq_max_padding, padding_len=padding_len)
+        self.tokenizer = OfficialGPT2Tokenizer(pretrained_tokenizer, self._mask_types, max_sent_len=max_sent_len,
+                                               overlap=overlap, pad_flag=eq_max_padding, padding_len=padding_len)
         self._record_ids, self._tokenized_source_list, self._tokenized_target_list = [], [], []
-        for record_id, doc, mask_sets in dataset:
+        print("Start data tokenization")
+        for record_id, doc, mask_sets in tqdm(dataset):
             if self.is_uncased:
                 doc = doc.lower()
             tokenized = self.tokenizer(doc, mask_sets, with_answers)
@@ -101,8 +77,9 @@ class TextInfillDataset(Dataset, ABC):
         self._record_ids = np.array(self._record_ids)
         self.device = device
 
-    @abstractmethod
+
     @property
+    @abstractmethod
     def _mask_types(self) -> List[Enum]:
         pass
 
@@ -119,8 +96,8 @@ class TextInfillDataset(Dataset, ABC):
         return len(self._tokenized_source_list)
 
     def __getitem__(self, idx):
-        source_ids = torch.tensor(self._tokenized_source_list[idx], device=self.device)
-        target_ids = torch.tensor(self._tokenized_target_list[idx], device=self.device)
+        source_ids = torch.tensor(self._tokenized_source_list[idx], dtype=torch.long, device=self.device)
+        target_ids = torch.tensor(self._tokenized_target_list[idx], dtype=torch.long, device=self.device)
 
         return self._record_ids[idx], source_ids, target_ids
 
@@ -138,7 +115,7 @@ class TextInfillDataset(Dataset, ABC):
 
 
 class RandomMaskTextInfillDataset(TextInfillDataset):
-    def __init__(self, path_to_data: str, split: str = None, max_num_examples=0, is_uncased=False, with_answers=True,
+    def __init__(self, path_to_data: str, split: str = None, max_num_examples=None, is_uncased=False, with_answers=True,
                  mask_p=None, max_span_len=None, num_examples_per_doc=3,
                  max_num_retries_per_ex=3, min_masked_spans_per_ex=None, max_masked_spans_per_ex=None,
                  pretrained_tokenizer: str = None, max_sent_len=1024, overlap=256, eq_max_padding=True, padding_len=None,
@@ -299,7 +276,7 @@ class ArxivRandomMaskTextInfillDataset(RandomMaskTextInfillDataset):
 
 class StoriesRandomMaskTextInfillDataset(RandomMaskTextInfillDataset):
     def __init__(self, path_to_data: str, split: str = None, with_titles=True, exclude_nonstandard=True,
-                 max_num_examples=0, is_uncased=False, with_answers=True,
+                 max_num_examples=None, is_uncased=False, with_answers=True,
                  mask_p=None, max_span_len=None, num_examples_per_doc=3,
                  max_num_retries_per_ex=3, min_masked_spans_per_ex=None, max_masked_spans_per_ex=None,
                  pretrained_tokenizer: str = None, max_sent_len=1024, overlap=256, eq_max_padding=True, padding_len=None,
@@ -385,7 +362,7 @@ class StoriesRandomMaskTextInfillDataset(RandomMaskTextInfillDataset):
 
 
 class MarkedUpTextInfillDataset(TextInfillDataset):
-    def __init__(self, path_to_data: str, split: str = None, max_num_examples=0,
+    def __init__(self, path_to_data: str, split: str = None, max_num_examples=None,
                  is_uncased=False, with_answers=True, other_label: str = '0', label2type=None,
                  pretrained_tokenizer: str = None, max_sent_len=768, overlap=256, eq_max_padding=True, padding_len=1024,
                  device="cuda:0"):
@@ -444,7 +421,7 @@ class MarkedUpTextInfillDataset(TextInfillDataset):
 
 class FromListMarkedUpTextInfillDataset(MarkedUpTextInfillDataset):
     def __init__(self, path_to_data: str, marked_up_docs: Tuple[List[int], List[List[str]], List[List[str]]],
-                 split: str = None, max_num_examples=0,
+                 split: str = None, max_num_examples=None,
                  is_uncased=False, with_answers=True, other_label: str = '0', label2type=None,
                  pretrained_tokenizer: str = None, max_sent_len=1024, overlap=256, eq_max_padding=True, padding_len=1024,
                  device="cuda:0"):
@@ -481,3 +458,28 @@ def get_ngram_type(label: str) -> Enum:
 def get_personal_entity_type(label: str) -> Enum:
     """Из метки [подстроки] в формате строки получает тип маски для именованных сущностей с личной информацией"""
     return MaskEntityType[label.upper()]
+
+
+class DatasetType(Enum):
+    ARXIV_CS_ABSTRACTS = 0
+    ROC_STORIES = 1
+    ROC_STORIES_NO_TITLE = 2
+    I2B2SIX = 3  # TODO Добавить класс датасета
+    I2B2FOURTEEN = 4  # TODO Добавить класс датасета
+
+
+def get_text_infill_dataset(dataset, *args, **kwargs) -> TextInfillDataset:
+    if not isinstance(dataset, DatasetType):
+        dataset = DatasetType[dataset.upper()]
+
+    if dataset == DatasetType.ARXIV_CS_ABSTRACTS:
+        d = ArxivRandomMaskTextInfillDataset(*args, **kwargs)
+    elif dataset == DatasetType.ROC_STORIES:
+        d = StoriesRandomMaskTextInfillDataset(*args, **kwargs)
+    elif dataset == DatasetType.ROC_STORIES_NO_TITLE:
+        kwargs['with_titles'] = False
+        d = StoriesRandomMaskTextInfillDataset(*args, **kwargs)
+    else:
+        assert False
+
+    return d

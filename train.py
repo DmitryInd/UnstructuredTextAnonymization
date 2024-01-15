@@ -60,4 +60,4 @@ if __name__ == '__main__':
     trainer.fit(ner_model, train_dataloader, val_dataloader)
     # Plot graphics
     t_reader = TensorBoardReader(Path(model_config["log_dir"]) / Path("lightning_logs"))
-    t_reader.plot_tensorboard_graphics()
+    t_reader.plot_ner_tensorboard_graphics()

@@ -1,6 +1,6 @@
 import re
 from pathlib import Path
-from typing import Iterable, Dict
+from typing import Iterable, Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
@@ -53,8 +53,7 @@ class TensorBoardReader:
         ), "some scalars were not found in the event accumulator"
         return {k: pd.DataFrame(ea.Scalars(k))["value"].to_numpy() for k in scalars_names}
 
-    def plot_tensorboard_graphics(self, version: int = -1):
-        data = self.get_scalars(version)
+    def plot_ner_tensorboard_graphics(self, version: int = -1):
         subplots = [['val_loss', 'train_loss'],
                     ['val_recall', 'train_recall'],
                     ['val_precision', 'train_precision']]
@@ -67,7 +66,28 @@ class TensorBoardReader:
                   'val_loss': 'Valid',
                   'val_recall': 'Valid',
                   'val_precision': 'Valid'}
+        self.plot_tensorboard_graphics(subplots, subplots_titles, labels, version)
 
+    def plot_text_infill_tensorboard_graphics(self, version: int = -1):
+        subplots = [
+            ['val_loss', 'train_loss']
+            # , ['val_cer', 'train_cer']
+        ]
+        subplots_titles = [
+            ("История ошибки", "Ошибка")
+            # , ("История CER", "CER")
+        ]
+        labels = {
+            'train_loss': 'Train'
+            #, 'train_cer': 'Train'
+            , 'val_loss': 'Valid'
+            # ,'val_cer': 'Valid'
+        }
+        self.plot_tensorboard_graphics(subplots, subplots_titles, labels, version)
+
+    def plot_tensorboard_graphics(self, subplots: List[List[str]], subplots_titles: List[Tuple[str, str]],
+                                  labels: Dict[str, str], version: int = -1):
+        data = self.get_scalars(version)
         fig, axes = plt.subplots(1, len(subplots), figsize=(7*len(subplots), 5))
         for i, (scalar_names, (title, y_label)) in enumerate(zip(subplots, subplots_titles)):
             for name in scalar_names:

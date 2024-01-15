@@ -47,6 +47,7 @@ if __name__ == '__main__':
                                   max_length=data_config["max_token_number"],
                                   overlap=data_config["overlap"],
                                   eq_max_padding=data_config["eq_max_padding"])
+    print(f"Len of train dataset: {len(train_dataset)}\nLen of validation dataset: {len(val_dataset)}")
     train_dataloader = DataLoader(train_dataset, shuffle=True,
                                   batch_size=data_config["batch_size"],
                                   collate_fn=train_dataset.get_collate_fn())
@@ -67,6 +68,7 @@ if __name__ == '__main__':
     ner_checkpoint_callback = ModelCheckpoint(filename='best-{epoch}', monitor='val_recall', mode='max', save_top_k=1)
     trainer_args = {
         "accelerator": "gpu",
+        "log_every_n_steps": 1,
         "max_epochs": model_config["epochs"],
         "default_root_dir": model_config["log_dir"],
         "callbacks": ner_checkpoint_callback
@@ -75,4 +77,4 @@ if __name__ == '__main__':
     trainer.fit(ner_model, train_dataloader, val_dataloader)
     # Plot graphics
     t_reader = TensorBoardReader(Path(model_config["log_dir"]) / Path("lightning_logs"))
-    t_reader.plot_tensorboard_graphics()
+    t_reader.plot_text_infill_tensorboard_graphics()

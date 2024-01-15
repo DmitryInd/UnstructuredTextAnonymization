@@ -9,7 +9,7 @@ from transformers import GPT2LMHeadModel
 class PretrainedGPT2TextInfilling(pl.LightningModule):
     def __init__(self, pretrained_name: str, vocab_size: int, train_context,
                  lr: float, total_steps: int, adaptation_part: int, div_factor: int,
-                 end_fill_id=None):
+                 end_infill_id=None):
         """
         :param pretrained_name: название предобученной GPT2 модели из hugging face hub
         :param vocab_size: итоговый размер словаря (с добавлением или удалением части токенов)
@@ -32,7 +32,7 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         self.adaptation_part = adaptation_part
         self.train_context = train_context
 
-        self.end_fill_id = end_fill_id
+        self.end_fill_id = end_infill_id
 
     def forward(self, x):
         x = self.model(x)  # B, L, C
@@ -40,7 +40,7 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
 
     def configure_optimizers(self):
         # Similar to the article
-        params = list(self.parameters())
+        params = list(self.named_parameters())
         no_decay = ['bias', 'ln']
         optimizer_grouped_parameters = [
             {
@@ -67,16 +67,16 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         _, inputs, tts = batch  # B, L
         labels_context = self.tts_to_labels(inputs, tts, [TargetType.CONTEXT])
         labels_infill = self.tts_to_labels(inputs, tts, [TargetType.INFILL, TargetType.INFILL_SPECIAL])
-        logits, _ = self.model(inputs)
+        logits = self.model(inputs).logits
         logits = logits.transpose(2, 1)  # B, L, C -> B, C, L
         loss_context = self.criterion(logits, labels_context)
         loss_infill = self.criterion(logits, labels_infill)
 
-        loss = loss_infill.item()
+        loss = loss_infill
         if self.train_context:
-            loss += loss_context.item()
+            loss += loss_context
 
-        self.log('train_loss', loss.item(), on_step=False, on_epoch=True, logger=True)
+        self.log('train_loss', loss.item(), on_step=False, on_epoch=True, logger=True, prog_bar=True)
         # hard_pred = torch.argmax(logits, dim=-2)
         # train_cer = cer(hard_pred, inputs)  # TODO Добавить подсчёт CER между ответами
         # self.log('train_recall', self.train_recall, on_step=False, on_epoch=True, logger=True, prog_bar=True)
@@ -87,16 +87,16 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         _, inputs, tts = batch  # B, L
         labels_context = self.tts_to_labels(inputs, tts, [TargetType.CONTEXT])
         labels_infill = self.tts_to_labels(inputs, tts, [TargetType.INFILL, TargetType.INFILL_SPECIAL])
-        logits, _ = self.model(inputs)
+        logits = self.model(inputs).logits
         logits = logits.transpose(2, 1)  # B, L, C -> B, C, L
         loss_context = self.criterion(logits, labels_context)
         loss_infill = self.criterion(logits, labels_infill)
 
-        loss = loss_infill.item()
+        loss = loss_infill
         if self.train_context:
-            loss += loss_context.item()
+            loss += loss_context
 
-        self.log('val_loss', loss, on_step=False, on_epoch=True, logger=True)
+        self.log('val_loss', loss, on_step=False, on_epoch=True, logger=True, prog_bar=True)
         # hard_pred = torch.argmax(logits, dim=-2)
         # val_cer = cer(hard_pred, inputs)  # TODO Добавить подсчёт CER между ответами
         # self.log('val_cer', self.val_cer, on_step=False, on_epoch=True, logger=True, prog_bar=True)
@@ -107,7 +107,7 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         positions = (tts != TargetType.PAD.value).sum(dim=0)
         finished = set()
         while len(finished) < inputs.shape[0]:
-            logits, _ = self.model(inputs)  # B, L, C
+            logits = self.model(inputs).logits  # B, L, C
             hard_pred = torch.argmax(logits, dim=-1)
             for i, row in enumerate(hard_pred):
                 pos = positions[i]

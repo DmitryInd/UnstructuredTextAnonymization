@@ -3,7 +3,7 @@ from typing import List
 
 from nltk.tokenize import sent_tokenize
 
-from base import MaskFn
+from mask.base import MaskFn
 
 
 class MaskEntityType(Enum):
