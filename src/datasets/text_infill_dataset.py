@@ -49,7 +49,7 @@ class TextInfillDataset(Dataset, ABC):
         self.eq_max_padding = eq_max_padding
         if Path(path_to_data).suffix != '.pkl':
             masked_data = self._read_data(path_to_data)
-            path_to_data = str(Path(path_to_data).parent / Path(f'{Path(path_to_data).stem}.pkl'))
+            path_to_data = str(Path(path_to_data).parent / Path(f'{Path(path_to_data).stem}_{split}.pkl'))
             with open(path_to_data, 'wb') as f:
                 pickle.dump(masked_data, f)
         # [(текст документа, список наборов масок для него: [[(тип, сдвиг, длина), ...], ...]), ...]

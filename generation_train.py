@@ -19,7 +19,7 @@ if __name__ == '__main__':
     model_config = yaml.load(open("configs/gpt2-small_model_config.yaml", 'r'), Loader=yaml.Loader)
     # Data processing
     train_dataset = get_text_infill_dataset(dataset=data_config["dataset_type"],
-                                            path_to_data=data_config["path_to_data"],
+                                            path_to_data=data_config["path_to_train_data"],
                                             split="train",
                                             is_uncased=data_config["is_uncased"],
                                             mask_p=data_config["mask_p"],
@@ -31,28 +31,36 @@ if __name__ == '__main__':
                                             max_masked_spans_per_ex=data_config["max_masked_spans_per_ex"],
                                             pretrained_tokenizer=data_config["pretrained_tokenizer"],
                                             max_sent_len=data_config["max_sent_len"],
-                                            overlap=data_config["overlap"])
+                                            overlap=data_config["overlap"],
+                                            device='cpu')
     val_dataset = get_text_infill_dataset(dataset=data_config["dataset_type"],
-                                          path_to_data=data_config["path_to_data"],
+                                          path_to_data=data_config["path_to_valid_data"],
                                           split="valid",
                                           is_uncased=data_config["is_uncased"],
                                           mask_p=data_config["mask_p"],
                                           max_span_len=data_config["max_span_len"],
-                                            max_num_examples=data_config["max_num_valid_examples"],
+                                          max_num_examples=data_config["max_num_valid_examples"],
                                           num_examples_per_doc=data_config["num_examples_per_doc"],
                                           max_num_retries_per_ex=data_config["max_num_retries_per_ex"],
                                           min_masked_spans_per_ex=data_config["min_masked_spans_per_ex"],
                                           max_masked_spans_per_ex=data_config["max_masked_spans_per_ex"],
                                           pretrained_tokenizer=data_config["pretrained_tokenizer"],
                                           max_sent_len=data_config["max_sent_len"],
-                                          overlap=data_config["overlap"])
+                                          overlap=data_config["overlap"],
+                                          device='cpu')
     print(f"Len of train dataset: {len(train_dataset)}\nLen of validation dataset: {len(val_dataset)}")
     train_dataloader = DataLoader(train_dataset, shuffle=True,
                                   batch_size=data_config["batch_size"],
-                                  collate_fn=train_dataset.get_collate_fn())
+                                  collate_fn=train_dataset.get_collate_fn(),
+                                  num_workers=10,
+                                  pin_memory=False,
+                                  persistent_workers=True)
     val_dataloader = DataLoader(val_dataset, shuffle=False,
                                 batch_size=data_config["batch_size"],
-                                collate_fn=val_dataset.get_collate_fn())
+                                collate_fn=val_dataset.get_collate_fn(),
+                                num_workers=10,
+                                pin_memory=False,
+                                persistent_workers=True)
     # Pytorch lightning
     text_infill_model = PretrainedGPT2TextInfilling(pretrained_name=model_config["pretrained_model_path"],
                                                     vocab_size=train_dataset.tokenizer.vocab_size,
@@ -78,4 +86,4 @@ if __name__ == '__main__':
     trainer.fit(text_infill_model, train_dataloader, val_dataloader)
     # Plot graphics
     t_reader = TensorBoardReader(Path(model_config["log_dir"]) / Path("lightning_logs"))
-    t_reader.plot_ner_tensorboard_graphics()
+    t_reader.plot_text_infill_tensorboard_graphics()

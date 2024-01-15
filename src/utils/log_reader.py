@@ -87,8 +87,10 @@ class TensorBoardReader:
 
     def plot_tensorboard_graphics(self, subplots: List[List[str]], subplots_titles: List[Tuple[str, str]],
                                   labels: Dict[str, str], version: int = -1):
-        data = self.get_scalars(version)
+        data = self.get_scalars(version, [x for metrics in subplots for x in metrics])
         fig, axes = plt.subplots(1, len(subplots), figsize=(7*len(subplots), 5))
+        if len(subplots) == 1:
+            axes = [axes]
         for i, (scalar_names, (title, y_label)) in enumerate(zip(subplots, subplots_titles)):
             for name in scalar_names:
                 axes[i].plot(list(range(1, 1 + len(data[name]))),

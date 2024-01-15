@@ -1,5 +1,6 @@
 dataset_type: "roc_stories_no_title"
-path_to_data: "data/token/roc_stories.pkl"
+path_to_train_data: "data/token/roc_stories_train.pkl"
+path_to_valid_data: "data/token/roc_stories_valid.pkl"
 is_uncased: True
 mask_p: 0.03
 max_span_len: 8
