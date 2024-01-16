@@ -63,7 +63,11 @@ class TextInfillDataset(Dataset, ABC):
         for record_id, doc, mask_sets in tqdm(dataset):
             if self.is_uncased:
                 doc = doc.lower()
+            if record_id == '557':
+                print("SOS")
             tokenized = self.tokenizer(doc, mask_sets, with_answers)
+            if doc and not tokenized[0]:
+                raise ValueError("Tokenization error")
             # For saving order of subsequences
             self._record_ids.extend([f"{record_id}:{-i}" for i in range(len(tokenized[0]) - 1, -1, -1)])
             self._tokenized_source_list.extend(tokenized[0])
@@ -458,6 +462,7 @@ class I2b2SixNerDatasetMarkedUpTextInfillDataset(MarkedUpTextInfillDataset):
             for variant in variants:
                 alias2label[variant] = standard
 
+        path_to_data = Path(path_to_data).glob("*.xml").__iter__().__next__()
         tree = ET.ElementTree(file=path_to_data)
         root = tree.getroot()
         records = root.findall('RECORD')

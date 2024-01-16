@@ -1,17 +1,17 @@
 dataset_type: "roc_stories_no_title"
-path_to_train_data: "data/token/roc_stories_train.pkl"
-path_to_valid_data: "data/token/roc_stories_valid.pkl"
+train_data_path: "data/token/roc_stories_train.pkl"
+valid_data_path: "data/token/roc_stories_valid.pkl"
 is_uncased: True
-mask_p: 0.03
+mask_p: 0.1
 max_span_len: 8
-max_num_train_examples: 1024
-max_num_valid_examples: 512
+max_num_train_examples: 4096
+max_num_valid_examples: 2048
 num_examples_per_doc: 1
 max_num_retries_per_ex: 3
 min_masked_spans_per_ex: 1
 max_masked_spans_per_ex: 5
 pretrained_tokenizer: "data/tokenizer/official_gpt2_encoder"
-max_sent_len: 256
-overlap: 32
+max_token_number: 64
+overlap: 16
 
-batch_size: 8
+batch_size: 16

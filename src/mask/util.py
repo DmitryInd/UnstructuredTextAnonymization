@@ -29,6 +29,7 @@ def align_char_mask_to_tokens(d: str, d_toks: List[str], masked_char_spans: List
     # Find token offsets in characters
     try:
         d_toks_offs = tokens_offsets(d, d_toks)
+        # TODO сделать обработку токенов, которые являются составляющими символов (пример: случай с апострофом)
         assert None not in d_toks_offs
     except:
         raise ValueError('Tokens could not be aligned to document')
@@ -139,13 +140,16 @@ def apply_masked_spans(doc: List[int], masked_spans: List[Tuple[Enum, int, int]]
 
     context = doc[:]
     answers = []
-    for (span_type, span_off, span_len) in masked_spans:
+    for i, (span_type, span_off, span_len) in enumerate(masked_spans):
         if span_len == 0:
             continue
 
         if span_off >= len(context):
             raise ValueError()
 
+        while context[span_off] is None:
+            masked_spans[i] = (span_type, span_off + 1, span_len - 1)
+            _, span_off, span_len = masked_spans[i]
         answers.append((span_type, context[span_off:span_off + span_len]))
         context[span_off:span_off + span_len] = [None] * span_len
 

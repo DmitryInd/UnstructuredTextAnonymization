@@ -1,3 +1,4 @@
+dataset_type: "i2b2six"
 train_data_path: "./data/token/i2b2-2006/train"
 train_data_type: "2006"
 validate_data_path: "./data/token/i2b2-2006/test"

@@ -397,7 +397,8 @@ class OfficialGPT2Tokenizer:
         tok_masks = []
         for char_mask in char_masks:
             try:
-                tok_mask = align_char_mask_to_tokens(doc, doc_tokens, char_mask)
+                tok_mask = align_char_mask_to_tokens(doc, doc_tokens, char_mask,
+                                                     ensure_nonoverlapping_spans=False)
             except:
                 # error_to_count['Failed to align character-level mask to tokens'] += 1
                 continue

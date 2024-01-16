@@ -45,34 +45,46 @@ class GPT2GenerationAnonymization(Anonymization):
         predictions = []
         self.model.end_infill_id = dataset.tokenizer.end_infill_id
         self.model.eval()
+        last_record_id = ""
         for batch in tqdm(dataloader):
-            _, inputs, tts = batch  # B, L
+            record_ids, inputs, tts = batch  # B, L
             outputs = self.model.inference(inputs, tts)
-            for pred in outputs:
+            for record_id, pred in zip(record_ids, outputs):
+                record_id = record_id.split(":", 1)[0]
+                if record_id != last_record_id:
+                    last_record_id = record_id
+                    predictions.append([])
                 start = list(pred).index(dataset.tokenizer.start_infill_id)
-                united_text = self._unite_context_answer(outputs[:start].tolist(), outputs[start+1:].tolist(),
-                                                         dataset.tokenizer)
-                predictions.append(dataset.tokenizer.decode(united_text))
+                answers = self._parse_answers(outputs[start+1:].tolist(), dataset.tokenizer)
+                for answer in answers:
+                    predictions[-1].append(dataset.tokenizer.decode(answer))
 
-        return predictions
+        new_texts = []
+        for source_text, categories in zip(source_text_list, general_category_list):
+            new_texts.append([])
+            i = 0
+            for text, category, answers in zip(source_text, categories, predictions):
+                if category != self.other_label:
+                    if i < len(answers):
+                        new_texts[-1].append(answers[i])
+                        i += 1
+                    else:
+                        new_texts[-1].append("")
+                else:
+                    new_texts[-1].append(text)
+
+        return new_texts
 
     @staticmethod
-    def _unite_context_answer(context: List[int], answer: List[int], tokenizer: OfficialGPT2Tokenizer) -> List[int]:
-        i = 0
-        while i < len(context):
-            if not answer:
-                break
-            token = context[i]
-            if token in tokenizer.mask_type_to_id.values():
-                try:
-                    end_answer = answer.index(tokenizer.end_infill_id)
-                except ValueError:
-                    end_answer = len(answer)
-                context = context[:i] + answer[:end_answer] + context[i+1:]
-                answer = answer[end_answer + 1:]
-                i += end_answer
-            else:
-                i += 1
+    def _parse_answers(answers: List[int], tokenizer: OfficialGPT2Tokenizer) -> List[List[int]]:
+        answers_list = []
+        while answers:
+            try:
+                end_answer = answers.index(tokenizer.end_infill_id)
+            except ValueError:
+                end_answer = len(answers)
+            answers_list = answers[:end_answer]
+            answers = answers[end_answer + 1:]
 
-        return context
+        return answers_list
 

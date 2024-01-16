@@ -128,7 +128,7 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         """
         selector = torch.zeros_like(inputs, dtype=torch.bool)
         for tt in label_tts:
-            selector |= tts == tt.value
+            selector |= (tts == tt.value)
         return torch.where(
             selector,
             inputs,

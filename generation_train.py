@@ -15,37 +15,26 @@ from utils.log_reader import TensorBoardReader
 if __name__ == '__main__':
     set_seed(42)
     # Config initialisation
-    data_config = yaml.load(open("configs/roc_stories_data_config.yaml", 'r'), Loader=yaml.Loader)
+    data_config = yaml.load(open("configs/i2b2-2006_data_config.yaml", 'r'), Loader=yaml.Loader)
     model_config = yaml.load(open("configs/gpt2-small_model_config.yaml", 'r'), Loader=yaml.Loader)
     # Data processing
     train_dataset = get_text_infill_dataset(dataset=data_config["dataset_type"],
-                                            path_to_data=data_config["path_to_train_data"],
+                                            path_to_data=data_config["train_data_path"],
                                             split="train",
+                                            other_label=data_config["other_label"],
                                             is_uncased=data_config["is_uncased"],
-                                            mask_p=data_config["mask_p"],
-                                            max_span_len=data_config["max_span_len"],
-                                            max_num_examples=data_config["max_num_train_examples"],
-                                            num_examples_per_doc=data_config["num_examples_per_doc"],
-                                            max_num_retries_per_ex=data_config["max_num_retries_per_ex"],
-                                            min_masked_spans_per_ex=data_config["min_masked_spans_per_ex"],
-                                            max_masked_spans_per_ex=data_config["max_masked_spans_per_ex"],
-                                            pretrained_tokenizer=data_config["pretrained_tokenizer"],
-                                            max_sent_len=data_config["max_sent_len"],
+                                            pretrained_tokenizer="data/tokenizer/official_gpt2_encoder",
+                                            max_sent_len=data_config["max_token_number"],
                                             overlap=data_config["overlap"],
                                             device='cpu')
+
     val_dataset = get_text_infill_dataset(dataset=data_config["dataset_type"],
-                                          path_to_data=data_config["path_to_valid_data"],
+                                          path_to_data=data_config["validate_data_path"],
                                           split="valid",
+                                          other_label=data_config["other_label"],
                                           is_uncased=data_config["is_uncased"],
-                                          mask_p=data_config["mask_p"],
-                                          max_span_len=data_config["max_span_len"],
-                                          max_num_examples=data_config["max_num_valid_examples"],
-                                          num_examples_per_doc=data_config["num_examples_per_doc"],
-                                          max_num_retries_per_ex=data_config["max_num_retries_per_ex"],
-                                          min_masked_spans_per_ex=data_config["min_masked_spans_per_ex"],
-                                          max_masked_spans_per_ex=data_config["max_masked_spans_per_ex"],
-                                          pretrained_tokenizer=data_config["pretrained_tokenizer"],
-                                          max_sent_len=data_config["max_sent_len"],
+                                          pretrained_tokenizer="data/tokenizer/official_gpt2_encoder",
+                                          max_sent_len=data_config["max_token_number"],
                                           overlap=data_config["overlap"],
                                           device='cpu')
     print(f"Len of train dataset: {len(train_dataset)}\nLen of validation dataset: {len(val_dataset)}")
@@ -64,7 +53,7 @@ if __name__ == '__main__':
     # Pytorch lightning
     text_infill_model = PretrainedGPT2TextInfilling(pretrained_name=model_config["pretrained_model_path"],
                                                     vocab_size=train_dataset.tokenizer.vocab_size,
-                                                    train_context=True,
+                                                    train_context=model_config["train_context"],
                                                     lr=model_config["lr"],
                                                     total_steps=model_config["epochs"] * len(train_dataloader),
                                                     adaptation_part=model_config["adaptation_part"],
