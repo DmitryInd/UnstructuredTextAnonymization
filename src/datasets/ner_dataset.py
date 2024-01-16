@@ -85,11 +85,11 @@ class NerDataset(Dataset, ABC):
         # Start of reading files
         self.is_uncased = is_uncased
         self.eq_max_padding = eq_max_padding
-        record_ids = []
         # For anonymization
         specific_category_list = []
         general_category_list = []
         # Dataset values
+        record_ids = []
         tokenized_source_list = []
         tokenized_target_list = []
         for xml_file in path.glob("*." + self.file_extension):

@@ -1,6 +1,7 @@
 import os
 import pickle
 import random
+import xml.etree.ElementTree as ET
 from abc import ABC, abstractmethod
 from collections import Counter
 from enum import Enum
@@ -12,9 +13,10 @@ import torch
 from torch.utils.data import Dataset
 from tqdm import tqdm
 
+from datasets.ner_dataset import LABEL_MEMBERSHIP
 from datasets.tokenization import OfficialGPT2Tokenizer
 from mask.n_gram import NgramsMaskFn, MaskNgramType
-from mask.personal_entity import PersonalEntityMaskFn, MaskEntityType
+from mask.personal_entity import MaskEntityType
 from mask.util import masked_spans_bounds_valid, masked_spans_overlap
 
 RAW_DATA_DIR = str(Path(__file__).absolute().parents[2] / Path('data') / Path('token'))
@@ -84,7 +86,7 @@ class TextInfillDataset(Dataset, ABC):
         pass
 
     @abstractmethod
-    def _read_data(self, path_to_data: str) -> List[Tuple[int, str, List[List[Tuple[MaskNgramType, int, int]]]]]:
+    def _read_data(self, path_to_data: str) -> List[Tuple[str, str, List[List[Tuple[MaskNgramType, int, int]]]]]:
         """
         Считывает данные и возвращает их в формате: текст документа и список наборов масок для него
         :param path_to_data: путь до директории с данными в формате строки
@@ -153,7 +155,7 @@ class RandomMaskTextInfillDataset(TextInfillDataset):
     def _mask_types(self) -> List[Enum]:
         return self.masker.mask_types()
 
-    def _read_data(self, path_to_data: str) -> List[Tuple[int, str, List[List[Tuple[MaskNgramType, int, int]]]]]:
+    def _read_data(self, path_to_data: str) -> List[Tuple[str, str, List[List[Tuple[MaskNgramType, int, int]]]]]:
         docs = self._read_docs(path_to_data)
         masked_data, error_to_count = self.randomly_mask_dataset(docs,
                                                                  random_sample_down_to_max=True,
@@ -161,7 +163,7 @@ class RandomMaskTextInfillDataset(TextInfillDataset):
                                                                  ensure_nonoverlapping_spans=True,
                                                                  ensure_unique=True)
         print(f'There were next errors in random masking dataset:\n{error_to_count}')
-        masked_data_with_id = [(i, t, m) for i, (t, m) in enumerate(masked_data)]
+        masked_data_with_id = [(str(i), t, m) for i, (t, m) in enumerate(masked_data)]
         return masked_data_with_id
 
     @abstractmethod
@@ -391,7 +393,7 @@ class MarkedUpTextInfillDataset(TextInfillDataset):
     def _mask_types(self) -> List[Enum]:
         return list(MaskNgramType)
 
-    def _read_data(self, path_to_data: str) -> List[Tuple[int, str, List[List[Tuple[Enum, int, int]]]]]:
+    def _read_data(self, path_to_data: str) -> List[Tuple[str, str, List[List[Tuple[Enum, int, int]]]]]:
         docs = self._read_docs(path_to_data)
         masked_data = []
         for doc in zip(*docs):
@@ -399,11 +401,11 @@ class MarkedUpTextInfillDataset(TextInfillDataset):
         return masked_data
 
     @abstractmethod
-    def _read_docs(self, path_to_data: str) -> Tuple[List[int], List[List[str]], List[List[str]]]:
+    def _read_docs(self, path_to_data: str) -> Tuple[List[str], List[List[str]], List[List[str]]]:
         pass
 
-    def convert_dataset(self, doc: Tuple[int, List[str], List[str]]) \
-            -> Tuple[int, str, List[List[Tuple[Enum, int, int]]]]:
+    def convert_dataset(self, doc: Tuple[str, List[str], List[str]]) \
+            -> Tuple[str, str, List[List[Tuple[Enum, int, int]]]]:
         """
         Переводит представление документа\n
         из формата: (id документа, список слов в документе, список классов/меток слов в документе)\n
@@ -420,7 +422,7 @@ class MarkedUpTextInfillDataset(TextInfillDataset):
 
 
 class FromListMarkedUpTextInfillDataset(MarkedUpTextInfillDataset):
-    def __init__(self, path_to_data: str, marked_up_docs: Tuple[List[int], List[List[str]], List[List[str]]],
+    def __init__(self, path_to_data: str, marked_up_docs: Tuple[List[str], List[List[str]], List[List[str]]],
                  split: str = None, max_num_examples=None,
                  is_uncased=False, with_answers=True, other_label: str = '0', label2type=None,
                  pretrained_tokenizer: str = None, max_sent_len=1024, overlap=256, eq_max_padding=True, padding_len=1024,
@@ -446,8 +448,103 @@ class FromListMarkedUpTextInfillDataset(MarkedUpTextInfillDataset):
         super().__init__(path_to_data, split, max_num_examples, is_uncased, with_answers, other_label, label2type,
                          pretrained_tokenizer, max_sent_len, overlap, eq_max_padding, padding_len, device)
 
-    def _read_docs(self, path_to_data: str) -> Tuple[List[int], List[List[str]], List[List[str]]]:
+    def _read_docs(self, path_to_data: str) -> Tuple[List[str], List[List[str]], List[List[str]]]:
         return self.marked_up_docs
+
+
+class I2b2SixNerDatasetMarkedUpTextInfillDataset(MarkedUpTextInfillDataset):
+    def _read_docs(self, path_to_data: str) -> Tuple[List[str], List[List[str]], List[List[str]]]:
+        label_aliases = LABEL_MEMBERSHIP
+        alias2label = {}
+        for standard, variants in label_aliases:
+            for variant in variants:
+                alias2label[variant] = standard
+
+        tree = ET.ElementTree(file=path_to_data)
+        root = tree.getroot()
+        records = root.findall('RECORD')
+        record_ids = []
+        source_batch = []
+        target_batch = []
+        for record in records:
+            source_words = []
+            target_labels = []
+            record_id = record.get('ID')
+            text = record.find('TEXT')
+            for child in text.iter():
+                if child.tag == 'PHI':
+                    source_words.append(child.text)
+                    target_labels.append(alias2label.get(child.get("TYPE"), self.other_label))
+                    if child.tail is not None:
+                        source_words.append(child.tail)
+                        target_labels.append(self.other_label)
+                elif child.tag == 'TEXT':
+                    if child.text is not None:
+                        source_words.append(child.text)
+                        target_labels.append(self.other_label)
+                elif child.text is not None or child.tail is not None:
+                    source_words.append((child.text if child.text is not None else '') + ' ' +
+                                        (child.tail if child.tail is not None else ''))
+                    target_labels.append(self.other_label)
+
+            if self.is_uncased:
+                source_words = [s_part.lower() for s_part in source_words]
+            record_ids.append(record_id)
+            source_batch.append(source_words)
+            target_batch.append(target_labels)
+
+        return record_ids, source_batch, target_batch
+
+
+class I2b2FourteenNerDatasetMarkedUpTextInfillDataset(MarkedUpTextInfillDataset):
+    def _read_docs(self, path_to_data: str) -> Tuple[List[str], List[List[str]], List[List[str]]]:
+        label_aliases = LABEL_MEMBERSHIP
+        alias2label = {}
+        for standard, variants in label_aliases:
+            for variant in variants:
+                alias2label[variant] = standard
+
+        path = Path(path_to_data)
+        record_ids = []
+        tokenized_source_list = []
+        tokenized_target_list = []
+        for xml_file in path.glob("*.xml"):
+            ids_batch, source_batch, target_batch = self._read_file(str(xml_file))
+            record_ids.append(ids_batch)
+            tokenized_source_list.append(source_batch)
+            tokenized_target_list.append([alias2label.get(alias, self.other_label) for alias in target_batch])
+
+        return record_ids, tokenized_source_list, tokenized_source_list
+
+    def _read_file(self, path_to_file: str) -> Tuple[str, List[str], List[str]]:
+        tree = ET.ElementTree(file=path_to_file)
+        root = tree.getroot()
+        record_id = Path(path_to_file).stem
+        source_words = []
+        target_labels = []
+        text = root.find('TEXT').text
+        tags = root.find('TAGS')
+        current_pos = 0
+        for child in tags:
+            start = int(child.get("start"))
+            if start > current_pos:
+                source_words.append(text[current_pos:start])
+                target_labels.append(self.other_label)
+            source_words.append(child.get("text"))
+            target_labels.append(self._phi_type_conversion(child.get("TYPE")))
+            current_pos = int(child.get("end"))
+        if current_pos < len(text):
+            source_words.append(text[current_pos:])
+            target_labels.append(self.other_label)
+        if self.is_uncased:
+            source_words = [s_part.lower() for s_part in source_words]
+        return record_id, source_words, target_labels
+
+    @staticmethod
+    def _phi_type_conversion(phi_type):
+        if phi_type == "DATE":
+            phi_type = "DATEYEAR"
+        return phi_type
 
 
 def get_ngram_type(label: str) -> Enum:
@@ -464,8 +561,8 @@ class DatasetType(Enum):
     ARXIV_CS_ABSTRACTS = 0
     ROC_STORIES = 1
     ROC_STORIES_NO_TITLE = 2
-    I2B2SIX = 3  # TODO Добавить класс датасета
-    I2B2FOURTEEN = 4  # TODO Добавить класс датасета
+    I2B2SIX = 3
+    I2B2FOURTEEN = 4
 
 
 def get_text_infill_dataset(dataset, *args, **kwargs) -> TextInfillDataset:
@@ -479,7 +576,11 @@ def get_text_infill_dataset(dataset, *args, **kwargs) -> TextInfillDataset:
     elif dataset == DatasetType.ROC_STORIES_NO_TITLE:
         kwargs['with_titles'] = False
         d = StoriesRandomMaskTextInfillDataset(*args, **kwargs)
+    elif dataset == DatasetType.I2B2SIX:
+        d = I2b2SixNerDatasetMarkedUpTextInfillDataset(*args, **kwargs)
+    elif dataset == DatasetType.I2B2FOURTEEN:
+        d = I2b2FourteenNerDatasetMarkedUpTextInfillDataset(*args, **kwargs)
     else:
-        assert False
+        assert False, "There is no such type of dataset"
 
     return d
