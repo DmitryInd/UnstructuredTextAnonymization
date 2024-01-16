@@ -42,8 +42,6 @@ class TextInfillDataset(Dataset, ABC):
         """
         path = Path(path_to_data)
         assert path.exists(), "The specified folder or file doesn't exist"
-        # Setting up entity labels
-        self.pad_label = "[PAD]"
         # Start of reading files
         self.split = split
         self.max_num_examples = max_num_examples
@@ -417,8 +415,8 @@ class MarkedUpTextInfillDataset(TextInfillDataset):
         for subseq, label in zip(doc[1], doc[2]):
             if label != self.other_label:
                 masks.append((self._get_type(label), len(text), len(subseq)))
-            text += subseq + " "
-        return doc[0], text[:-1], [masks]
+            text += subseq
+        return doc[0], text, [masks]
 
 
 class FromListMarkedUpTextInfillDataset(MarkedUpTextInfillDataset):

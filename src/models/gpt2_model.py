@@ -32,7 +32,7 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         self.adaptation_part = adaptation_part
         self.train_context = train_context
 
-        self.end_fill_id = end_infill_id
+        self.end_infill_id = end_infill_id
 
     def forward(self, x):
         x = self.model(x)  # B, L, C
@@ -74,7 +74,7 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
 
         loss = loss_infill
         if self.train_context:
-            loss += loss_context
+            loss += 0.1*loss_context
 
         self.log('train_loss', loss.item(), on_step=False, on_epoch=True, logger=True, prog_bar=True)
         # hard_pred = torch.argmax(logits, dim=-2)
@@ -94,7 +94,7 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
 
         loss = loss_infill
         if self.train_context:
-            loss += loss_context
+            loss += 0.1*loss_context
 
         self.log('val_loss', loss, on_step=False, on_epoch=True, logger=True, prog_bar=True)
         # hard_pred = torch.argmax(logits, dim=-2)
@@ -103,8 +103,8 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
 
     @torch.no_grad()
     def inference(self, inputs: torch.Tensor, tts: torch.Tensor):
-        masks_number = (tts != TargetType.CONTEXT_SPECIAL.value).sum(dim=0)
-        positions = (tts != TargetType.PAD.value).sum(dim=0)
+        masks_number = (tts == TargetType.CONTEXT_SPECIAL.value).sum(dim=1)
+        positions = (tts != TargetType.PAD.value).sum(dim=1)
         finished = set()
         while len(finished) < inputs.shape[0]:
             logits = self.model(inputs).logits  # B, L, C
@@ -117,7 +117,7 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
                 inputs[i, pos] = row[pos]
                 if row[pos] == self.end_infill_id:
                     masks_number[i] -= 1
-                pos += 1
+                positions[i] += 1
 
         return inputs
 

@@ -1,0 +1,10 @@
+dataset_type: "roc_stories_no_title"
+path_to_cashed_data: "./data/token/cashed_for_gpt2_anon"
+is_uncased: True
+pretrained_tokenizer: "data/tokenizer/official_gpt2_encoder"
+max_sent_len: 192
+padding_len: 256
+overlap: 32
+batch_size: 32
+model_version: 0
+log_dir: "./gpt2-small"

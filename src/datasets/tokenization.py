@@ -492,23 +492,27 @@ class OfficialGPT2Tokenizer:
         i, j = 0, 0  # context cursor, answers cursor
         last_mask_pos = -1
         query_len = 1
-        for i, token in enumerate(context):
+        for token in context:
+            if max_sent_len and query_len >= max_sent_len:
+                break
             query_len += 1
             if token in self.mask_type_to_id.values():
                 if with_answer:
                     answer = answers[j][1]
                 else:
                     answer = []
-                new_query_len = query_len + len(answer) + 1  # (context + <S> + answers) + answer + <E>
+                # (context + <S> + answers) + answer + <E>
+                new_query_len = query_len + len(answer)
+                if with_answer:
+                    new_query_len += 1
                 if max_sent_len and new_query_len > max_sent_len:
-                    i -= 1
                     break
                 query_len = new_query_len
                 last_mask_pos = i
                 j += 1
-            query_len += 1
+            i += 1
 
-        return i + 1, j, last_mask_pos
+        return i, j, last_mask_pos
 
     @property
     def vocab_size(self):
