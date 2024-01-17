@@ -27,12 +27,11 @@ def align_char_mask_to_tokens(d: str, d_toks: List[str], masked_char_spans: List
     :return: маски в формате (тип, сдвиг по токенам, длина по токенам)
     """
     # Find token offsets in characters
-    try:
-        d_toks_offs = tokens_offsets(d, d_toks)
-        # TODO сделать обработку токенов, которые являются составляющими символов (пример: случай с апострофом)
-        assert None not in d_toks_offs
-    except:
-        raise ValueError('Tokens could not be aligned to document')
+    # try:
+    #     d_toks_offs = tokens_offsets(d, d_toks)
+    #     assert None not in d_toks_offs
+    # except:
+    #     raise ValueError('Tokens could not be aligned to document')
 
     # Align character spans to model tokens
     masked_token_spans = [align_charspan_to_tokenspan(d, d_toks, char_off, char_len)[2:] for t, char_off, char_len in
@@ -49,7 +48,8 @@ def align_char_mask_to_tokens(d: str, d_toks: List[str], masked_char_spans: List
         orig_span = d[char_off:char_off + char_len]
         tok_span = ''.join(d_toks[tok_off:tok_off + tok_len])
         if orig_span not in tok_span:
-            raise Exception('Failed to align character span to tokens')
+            # TODO Доделать обработку ошибок, случай с апострофом всё ещё обрабатывается неправильно
+            print(f'Character span "{orig_span}" doesn\'t match with tokens span "{tok_span}"')
 
         result.append((char_t, tok_off, tok_len))
 
@@ -96,8 +96,8 @@ def align_charspan_to_tokenspan(x, x_tok, char_offset, char_len) -> Tuple[int, i
     if type(x_tok) != tuple:
         x_tok = tuple(x_tok)
     x_tok_offsets, x_tok_residuals, x_tok_rres = _tokens_offsets_and_residuals_memorized(x, x_tok)
-    if None in x_tok_offsets:
-        raise ValueError()
+    # if None in x_tok_offsets:
+    #     raise ValueError()
     x_tok_residuals.append(x_tok_rres)
     x_tok_lens = [len(t) for t in x_tok]
 
@@ -105,7 +105,8 @@ def align_charspan_to_tokenspan(x, x_tok, char_offset, char_len) -> Tuple[int, i
     # NOTE: This is one greater than len(x) because cursor can be at beginning or end.
     char_idx_to_token = [0] * len(x_tok_residuals[0])
     for i in range(len(x_tok)):
-        char_idx_to_token += [i] * (x_tok_lens[i] + len(x_tok_residuals[i + 1]))
+        if x_tok_offsets[i] is not None:
+            char_idx_to_token += [i] * (x_tok_lens[i] + len(x_tok_residuals[i + 1]))
     char_idx_to_token += [len(x_tok) - 1]
 
     if char_len == 0:

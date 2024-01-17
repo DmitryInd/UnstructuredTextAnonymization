@@ -4,7 +4,7 @@ from torch.utils.data import DataLoader
 
 from anonymization.base import Anonymization
 from datasets.text_infill_dataset import FromListMarkedUpTextInfillDataset, get_ngram_type
-from datasets.tokenization import OfficialGPT2Tokenizer
+from datasets.tokenization import OfficialGPT2Tokenizer, TargetType
 from models.gpt2_model import PretrainedGPT2TextInfilling
 from tqdm import tqdm
 
@@ -49,21 +49,23 @@ class GPT2GenerationAnonymization(Anonymization):
         for batch in tqdm(dataloader):
             record_ids, inputs, tts = batch  # B, L
             outputs = self.model.inference(inputs, tts)
-            for record_id, pred in zip(record_ids, outputs):
+            for record_id, labels, pred in zip(record_ids, tts, outputs):
                 record_id = record_id.split(":", 1)[0]
                 if record_id != last_record_id:
                     last_record_id = record_id
                     predictions.append([])
+                masks_number = (labels == TargetType.CONTEXT_SPECIAL.value).sum().item()
                 start = list(pred).index(dataset.tokenizer.start_infill_id)
-                answers = self._parse_answers(outputs[start+1:].tolist(), dataset.tokenizer)
-                for answer in answers:
+                answers = self._parse_answers(pred[start+1:].tolist(), dataset.tokenizer)
+                for i in range(masks_number):
+                    answer = answers[i] if i < len(answers) else []
                     predictions[-1].append(dataset.tokenizer.decode(answer))
 
         new_texts = []
-        for source_text, categories in zip(source_text_list, general_category_list):
+        for source_text, categories, answers in zip(source_text_list, general_category_list, predictions):
             new_texts.append([])
             i = 0
-            for text, category, answers in zip(source_text, categories, predictions):
+            for text, category in zip(source_text, categories):
                 if category != self.other_label:
                     if i < len(answers):
                         new_texts[-1].append(answers[i])
@@ -83,7 +85,7 @@ class GPT2GenerationAnonymization(Anonymization):
                 end_answer = answers.index(tokenizer.end_infill_id)
             except ValueError:
                 end_answer = len(answers)
-            answers_list = answers[:end_answer]
+            answers_list.append(answers[:end_answer])
             answers = answers[end_answer + 1:]
 
         return answers_list

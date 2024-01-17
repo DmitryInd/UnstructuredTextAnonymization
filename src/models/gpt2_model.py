@@ -67,14 +67,14 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         _, inputs, tts = batch  # B, L
         labels_context = self.tts_to_labels(inputs, tts, [TargetType.CONTEXT])
         labels_infill = self.tts_to_labels(inputs, tts, [TargetType.INFILL, TargetType.INFILL_SPECIAL])
-        logits = self.model(inputs).logits
+        logits = self.model(inputs[:, :-1]).logits
         logits = logits.transpose(2, 1)  # B, L, C -> B, C, L
-        loss_context = self.criterion(logits, labels_context)
-        loss_infill = self.criterion(logits, labels_infill)
+        loss_context = self.criterion(logits, labels_context[:, 1:])
+        loss_infill = self.criterion(logits, labels_infill[:, 1:])
 
         loss = loss_infill
         if self.train_context:
-            loss += 0.1*loss_context
+            loss += loss_context
 
         self.log('train_loss', loss.item(), on_step=False, on_epoch=True, logger=True, prog_bar=True)
         # hard_pred = torch.argmax(logits, dim=-2)
@@ -87,14 +87,14 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         _, inputs, tts = batch  # B, L
         labels_context = self.tts_to_labels(inputs, tts, [TargetType.CONTEXT])
         labels_infill = self.tts_to_labels(inputs, tts, [TargetType.INFILL, TargetType.INFILL_SPECIAL])
-        logits = self.model(inputs).logits
+        logits = self.model(inputs[:, :-1]).logits
         logits = logits.transpose(2, 1)  # B, L, C -> B, C, L
-        loss_context = self.criterion(logits, labels_context)
-        loss_infill = self.criterion(logits, labels_infill)
+        loss_context = self.criterion(logits, labels_context[:, 1:])
+        loss_infill = self.criterion(logits, labels_infill[:, 1:])
 
         loss = loss_infill
         if self.train_context:
-            loss += 0.1*loss_context
+            loss += loss_context
 
         self.log('val_loss', loss, on_step=False, on_epoch=True, logger=True, prog_bar=True)
         # hard_pred = torch.argmax(logits, dim=-2)
@@ -114,8 +114,8 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
                 if pos >= inputs.shape[1] or masks_number[i] <= 0:
                     finished.add(i)
                     continue
-                inputs[i, pos] = row[pos]
-                if row[pos] == self.end_infill_id:
+                inputs[i, pos] = row[pos - 1]
+                if row[pos - 1] == self.end_infill_id:
                     masks_number[i] -= 1
                 positions[i] += 1
 

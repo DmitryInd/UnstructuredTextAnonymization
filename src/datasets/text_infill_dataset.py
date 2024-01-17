@@ -63,8 +63,6 @@ class TextInfillDataset(Dataset, ABC):
         for record_id, doc, mask_sets in tqdm(dataset):
             if self.is_uncased:
                 doc = doc.lower()
-            if record_id == '557':
-                print("SOS")
             tokenized = self.tokenizer(doc, mask_sets, with_answers)
             if doc and not tokenized[0]:
                 raise ValueError("Tokenization error")
