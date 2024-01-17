@@ -32,6 +32,7 @@ if __name__ == '__main__':
                                   max_length=data_config["max_token_number"],
                                   overlap=data_config["overlap"],
                                   eq_max_padding=data_config["eq_max_padding"])
+    print(f"Len of train dataset: {len(train_dataset)}\nLen of validation dataset: {len(val_dataset)}")
     train_dataloader = DataLoader(train_dataset, shuffle=True,
                                   batch_size=data_config["batch_size"],
                                   collate_fn=train_dataset.get_collate_fn())

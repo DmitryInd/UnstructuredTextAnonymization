@@ -4,8 +4,8 @@ valid_data_path: "data/token/roc_stories_valid.pkl"
 is_uncased: True
 mask_p: 0.1
 max_span_len: 8
-max_num_train_examples: 4096
-max_num_valid_examples: 2048
+max_num_train_examples: 4096 # 15000
+max_num_valid_examples: 2048 # 3000
 num_examples_per_doc: 1
 max_num_retries_per_ex: 3
 min_masked_spans_per_ex: 1
