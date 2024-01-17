@@ -64,7 +64,7 @@ class WordPieceTokenizer:
         # Segmenting sentence
         token_segments, label_segments = [], []
         # TODO Добавить список сдвигов сегментов по токенам
-        if (self.max_sent_len is not None) and force_align:
+        if (self.max_sent_len is not None) and padding:
             for i in range(0, len(token_id_list), self.max_sent_len - self.overlap):
                 token_id_seg, label_id_seg = self._truncate(token_id_list[i:i + self.max_sent_len + 1],
                                                             label_id_list[i:i + self.max_sent_len + 1])
