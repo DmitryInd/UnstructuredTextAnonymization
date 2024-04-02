@@ -77,7 +77,7 @@ class Statistics:
     @staticmethod
     def _get_rgb_cell_map(float_cell_map: np.ndarray):
         assert len(float_cell_map.shape) == 2, "Confusion matrix has more than two dimensions"
-        cmap = plt.cm.get_cmap('Greens')
+        cmap = plt.cm.get_cmap('Wistia')
         max_values = np.sum(float_cell_map, axis=1)
         rgb_cell_map = [[cmap(cell / (max_value + 1e-5)) for cell in row]
                         for row, max_value in zip(float_cell_map, max_values)]

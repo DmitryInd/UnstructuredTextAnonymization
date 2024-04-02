@@ -133,6 +133,7 @@ def apply_masked_spans(doc: List[int], masked_spans: List[Tuple[Enum, int, int]]
     Заменяет токены маскируемых отрезков на маскировочные токены
     :param doc: текст в формате списка id токенов
     :param masked_spans: список замаскированных отрезков текста в формате (тип, сдвиг, длина)
+    отрезки должны быть отсортированы по сдвигу в порядке возрастания!!!
     :param mask_type_to_substitution: словарь id маскировочных токенов для каждого типа маски
     :return: (контекст с убранным замаскированным текстом, список замаскированных отрезков: (тип, список токенов))
     """
@@ -158,7 +159,7 @@ def apply_masked_spans(doc: List[int], masked_spans: List[Tuple[Enum, int, int]]
         if None in span:
             raise ValueError('Overlapping mask detected')
 
-    for i, (span_type, _, span_len) in enumerate(masked_spans):
+    for span_type, _, span_len in masked_spans:
         span_off = context.index(None)
         assert all([i is None for i in context[span_off:span_off + span_len]])
         del context[span_off:span_off + span_len]

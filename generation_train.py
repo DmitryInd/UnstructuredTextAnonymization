@@ -15,27 +15,49 @@ from utils.log_reader import TensorBoardReader
 if __name__ == '__main__':
     set_seed(42)
     # Config initialisation
-    data_config = yaml.load(open("configs/i2b2-2006_data_config.yaml", 'r'), Loader=yaml.Loader)
+    data_config = yaml.load(open("configs/roc_stories_data_config.yaml", 'r'), Loader=yaml.Loader)
     model_config = yaml.load(open("configs/gpt2-small_model_config.yaml", 'r'), Loader=yaml.Loader)
     # Data processing
+    # train_dataset = get_text_infill_dataset(dataset=data_config["dataset_type"],
+    #                                         path_to_data=data_config["train_data_path"],
+    #                                         split="train",
+    #                                         other_label=data_config["other_label"],
+    #                                         is_uncased=data_config["is_uncased"],
+    #                                         pretrained_tokenizer="data/tokenizer/official_gpt2_encoder",
+    #                                         max_sent_len=data_config["max_token_number"],
+    #                                         overlap=data_config["overlap"],
+    #                                         device='cpu')
+
     train_dataset = get_text_infill_dataset(dataset=data_config["dataset_type"],
                                             path_to_data=data_config["train_data_path"],
                                             split="train",
-                                            other_label=data_config["other_label"],
                                             is_uncased=data_config["is_uncased"],
                                             pretrained_tokenizer="data/tokenizer/official_gpt2_encoder",
                                             max_sent_len=data_config["max_token_number"],
                                             overlap=data_config["overlap"],
+                                            mask_p=data_config["mask_p"],
+                                            max_span_len=data_config["max_span_len"],
+                                            max_num_examples=data_config["max_num_train_examples"],
+                                            num_examples_per_doc=data_config["num_examples_per_doc"],
+                                            max_num_retries_per_ex=data_config["max_num_retries_per_ex"],
+                                            min_masked_spans_per_ex=data_config["min_masked_spans_per_ex"],
+                                            max_masked_spans_per_ex=data_config["max_masked_spans_per_ex"],
                                             device='cpu')
 
     val_dataset = get_text_infill_dataset(dataset=data_config["dataset_type"],
                                           path_to_data=data_config["validate_data_path"],
                                           split="valid",
-                                          other_label=data_config["other_label"],
                                           is_uncased=data_config["is_uncased"],
                                           pretrained_tokenizer="data/tokenizer/official_gpt2_encoder",
                                           max_sent_len=data_config["max_token_number"],
                                           overlap=data_config["overlap"],
+                                          mask_p=data_config["mask_p"],
+                                          max_span_len=data_config["max_span_len"],
+                                          max_num_examples=data_config["max_num_valid_examples"],
+                                          num_examples_per_doc=data_config["num_examples_per_doc"],
+                                          max_num_retries_per_ex=data_config["max_num_retries_per_ex"],
+                                          min_masked_spans_per_ex=data_config["min_masked_spans_per_ex"],
+                                          max_masked_spans_per_ex=data_config["max_masked_spans_per_ex"],
                                           device='cpu')
     print(f"Len of train dataset: {len(train_dataset)}\nLen of validation dataset: {len(val_dataset)}")
     train_dataloader = DataLoader(train_dataset, shuffle=True,

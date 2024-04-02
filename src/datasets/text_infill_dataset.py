@@ -228,7 +228,8 @@ class RandomMaskTextInfillDataset(TextInfillDataset):
                 if mask is not None:
                     if (self.max_masked_spans_per_ex is not None and random_sample_down_to_max
                             and len(mask) > self.max_masked_spans_per_ex):
-                        mask = tuple(random.sample(mask, self.max_masked_spans_per_ex))
+                        m_indexes = sorted(random.sample(np.arange(len(mask)).tolist(), self.max_masked_spans_per_ex))
+                        mask = tuple(mask[index] for index in m_indexes)
                     mask_is_acceptable, error_msg = mask_acceptable(mask)
                     if not mask_is_acceptable:
                         error_to_count['Issue with example: {}'.format(error_msg)] += 1

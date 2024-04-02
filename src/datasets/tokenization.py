@@ -388,6 +388,8 @@ class OfficialGPT2Tokenizer:
         :param char_masks: список наборов масок для текста в формате [(тип, сдвиг, длина), ...]
         :return: [(список токенов документа без замаскированных символов, список масок в формате (тип, список токенов)), ...]
         """
+        # TODO: поменять принцип токенизации на более устойчивый:
+        #  сначала разбиваем на отрезки, потом токенизируем их и объединяем
         # Get text tokens from token_ids
         raw_tokens = [self.decoder[token_id] for token_id in doc_tokens_ids]
         doc_tokens = [bytearray([self.byte_decoder[c] for c in token]).decode('utf-8', errors=self.errors)
