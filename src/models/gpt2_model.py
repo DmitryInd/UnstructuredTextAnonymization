@@ -1,7 +1,6 @@
 import torch
 import pytorch_lightning as pl
 from torch import nn
-from utils.distances import cer
 from datasets.tokenization import TargetType
 from transformers import GPT2LMHeadModel
 
