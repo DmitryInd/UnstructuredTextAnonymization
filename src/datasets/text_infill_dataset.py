@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from collections import Counter
 from enum import Enum
 from pathlib import Path
-from typing import Tuple, List
+from typing import Tuple, List, Optional
 
 import numpy as np
 import torch
@@ -24,8 +24,8 @@ RAW_DATA_DIR = str(Path(__file__).absolute().parents[2] / Path('data') / Path('t
 
 class TextInfillDataset(Dataset, ABC):
     def __init__(self, path_to_data: str, split: str = None, max_num_examples=None, is_uncased=False, with_answers=True,
-                 pretrained_tokenizer: str = None, max_sent_len=1024, overlap=256, eq_max_padding=True, padding_len=None,
-                 device="cuda:0"):
+                 pretrained_tokenizer: str = None, max_full_ex_len=1024, max_only_context_len=None, overlap=256,
+                 eq_max_padding=True, device="cuda:0", **kwargs):
         """
         :param path_to_data: путь к директории с данными, которые необходимо предварительно замаскировать, или к размеченному '.pkl' файлу
         :param split: тип среза данных: train, val, test
@@ -33,11 +33,11 @@ class TextInfillDataset(Dataset, ABC):
         :param is_uncased: приводить ли все символы к нижнему регистру или нет
         :param with_answers: добавлять ли к замаскированному запросу ответы (false, если в данных нет ответов)
         :param pretrained_tokenizer: путь к сохранённым параметрам токенизатора
-        :param max_sent_len: максимальное количество токенов в примере
+        :param max_full_ex_len: максимальное количество токенов в примере
+        :param max_only_context_len: максимальное количество токенов для запроса без ответа
         :param overlap: пересечение последовательных частей предложений
-        :param eq_max_padding: паддинг до padding_len | max_sent_len или
+        :param eq_max_padding: паддинг до max_full_ex_len или
                                паддинг до самого длинного примера в батче
-        :param padding_len: длина, до которой дополняются паддингом все примеры без ответов
         :param device: устройство, на котором будет исполняться запрос
         """
         path = Path(path_to_data)
@@ -47,17 +47,19 @@ class TextInfillDataset(Dataset, ABC):
         self.max_num_examples = max_num_examples
         self.is_uncased = is_uncased
         self.eq_max_padding = eq_max_padding
+        # [(текст документа, список наборов масок для него: [[(тип, сдвиг, длина), ...], ...]), ...]
         if Path(path_to_data).suffix != '.pkl':
-            masked_data = self._read_data(path_to_data)
+            dataset = self._read_data(path_to_data)
             path_to_data = str(Path(path_to_data).parent / Path(f'{Path(path_to_data).stem}_{split}.pkl'))
             with open(path_to_data, 'wb') as f:
-                pickle.dump(masked_data, f)
-        # [(текст документа, список наборов масок для него: [[(тип, сдвиг, длина), ...], ...]), ...]
-        with open(path_to_data, 'rb') as f:
-            dataset = pickle.load(f)
+                pickle.dump(dataset, f)
+        else:
+            with open(path_to_data, 'rb') as f:
+                dataset = pickle.load(f)
         # Data tokenization
-        self.tokenizer = OfficialGPT2Tokenizer(pretrained_tokenizer, self._mask_types, max_sent_len=max_sent_len,
-                                               overlap=overlap, pad_flag=eq_max_padding, padding_len=padding_len)
+        self.tokenizer = OfficialGPT2Tokenizer(pretrained_tokenizer, self._mask_types, max_full_ex_len=max_full_ex_len,
+                                               max_only_context_len=max_only_context_len, overlap=overlap,
+                                               pad_flag=eq_max_padding)
         self._record_ids, self._tokenized_source_list, self._tokenized_target_list = [], [], []
         print("Start data tokenization")
         for record_id, doc, mask_sets in tqdm(dataset):
@@ -70,7 +72,7 @@ class TextInfillDataset(Dataset, ABC):
             self._record_ids.extend([f"{record_id}:{-i}" for i in range(len(tokenized[0]) - 1, -1, -1)])
             self._tokenized_source_list.extend(tokenized[0])
             self._tokenized_target_list.extend(tokenized[1])
-        if self.max_num_examples is not None:
+        if self.max_num_examples is not None and self.max_num_examples < len(self._tokenized_source_list):
             example_ids = random.sample(list(range(len(self._tokenized_source_list))), max_num_examples)
             self._record_ids = [self._record_ids[x] for x in example_ids]
             self._tokenized_source_list = [self._tokenized_source_list[x] for x in example_ids]
@@ -78,7 +80,6 @@ class TextInfillDataset(Dataset, ABC):
         self.record2idx = {record_id: i for i, record_id in enumerate(self._record_ids)}
         self._record_ids = np.array(self._record_ids)
         self.device = device
-
 
     @property
     @abstractmethod
@@ -120,8 +121,8 @@ class RandomMaskTextInfillDataset(TextInfillDataset):
     def __init__(self, path_to_data: str, split: str = None, max_num_examples=None, is_uncased=False, with_answers=True,
                  mask_p=None, max_span_len=None, num_examples_per_doc=3,
                  max_num_retries_per_ex=3, min_masked_spans_per_ex=None, max_masked_spans_per_ex=None,
-                 pretrained_tokenizer: str = None, max_sent_len=1024, overlap=256, eq_max_padding=True, padding_len=None,
-                 device="cuda:0"):
+                 pretrained_tokenizer: str = None, max_full_ex_len=1024,  max_only_context_len=None, overlap=256,
+                 eq_max_padding=True, device="cuda:0", **kwargs):
         """
         :param path_to_data: путь к директории с данными, которые необходимо предварительно замаскировать, или к размеченному '.pkl' файлу
         :param split: тип среза данных: train, val, test
@@ -135,11 +136,11 @@ class RandomMaskTextInfillDataset(TextInfillDataset):
         :param min_masked_spans_per_ex: минимальное количество масок в одной разметке документа
         :param max_masked_spans_per_ex: максимальное количество масок в одной разметке документа
         :param pretrained_tokenizer: путь к сохранённым параметрам токенизатора
-        :param max_sent_len: максимальное количество токенов в примере
+        :param max_full_ex_len: максимальное количество токенов в примере
+        :param max_only_context_len: максимальное количество токенов для запроса без ответа
         :param overlap: пересечение последовательных частей предложений
-        :param eq_max_padding: паддинг до максимальной указанной длины для всех примеров или
+        :param eq_max_padding: паддинг до max_full_ex_len или
                                паддинг до самого длинного примера в батче
-        :param padding_len: длина, до которой дополняются паддингом все примеры без ответов
         :param device: устройство, на котором будет исполняться запрос
         """
         # TODO Добавить возможность размечать случайными именованными метками
@@ -148,8 +149,8 @@ class RandomMaskTextInfillDataset(TextInfillDataset):
         self.max_num_retries_per_ex = max_num_retries_per_ex  # per example
         self.min_masked_spans_per_ex = min_masked_spans_per_ex  # per example
         self.max_masked_spans_per_ex = max_masked_spans_per_ex  # per example
-        super().__init__(path_to_data, split, max_num_examples, is_uncased, with_answers,
-                         pretrained_tokenizer, max_sent_len, overlap, eq_max_padding, padding_len, device)
+        super().__init__(path_to_data, split, max_num_examples, is_uncased, with_answers, pretrained_tokenizer,
+                         max_full_ex_len, max_only_context_len, overlap, eq_max_padding, device)
 
     @property
     def _mask_types(self) -> List[Enum]:
@@ -228,7 +229,7 @@ class RandomMaskTextInfillDataset(TextInfillDataset):
                 if mask is not None:
                     if (self.max_masked_spans_per_ex is not None and random_sample_down_to_max
                             and len(mask) > self.max_masked_spans_per_ex):
-                        m_indexes = sorted(random.sample(np.arange(len(mask)).tolist(), self.max_masked_spans_per_ex))
+                        m_indexes = sorted(random.sample(list(range(len(mask))), self.max_masked_spans_per_ex))
                         mask = tuple(mask[index] for index in m_indexes)
                     mask_is_acceptable, error_msg = mask_acceptable(mask)
                     if not mask_is_acceptable:
@@ -282,8 +283,8 @@ class StoriesRandomMaskTextInfillDataset(RandomMaskTextInfillDataset):
                  max_num_examples=None, is_uncased=False, with_answers=True,
                  mask_p=None, max_span_len=None, num_examples_per_doc=3,
                  max_num_retries_per_ex=3, min_masked_spans_per_ex=None, max_masked_spans_per_ex=None,
-                 pretrained_tokenizer: str = None, max_sent_len=1024, overlap=256, eq_max_padding=True, padding_len=None,
-                 device="cuda:0"):
+                 pretrained_tokenizer: str = None, max_full_ex_len=1024, max_only_context_len=None, overlap=256,
+                 eq_max_padding=True, device="cuda:0", **kwargs):
         """
         :param path_to_data: путь к директории с данными, которые необходимо предварительно замаскировать, или к размеченному '.pkl' файлу
         :param split: тип среза данных: train, val, test
@@ -299,19 +300,18 @@ class StoriesRandomMaskTextInfillDataset(RandomMaskTextInfillDataset):
         :param min_masked_spans_per_ex: минимальное количество масок в одной разметке документа
         :param max_masked_spans_per_ex: максимальное количество масок в одной разметке документа
         :param pretrained_tokenizer: путь к сохранённым параметрам токенизатора
-        :param max_sent_len: максимальное количество токенов в примере
+        :param max_full_ex_len: максимальное количество токенов в примере
+        :param max_only_context_len: максимальное количество токенов для запроса без ответа
         :param overlap: пересечение последовательных частей предложений
-        :param eq_max_padding: паддинг до максимальной указанной длины для всех примеров или
+        :param eq_max_padding: паддинг до max_full_ex_len или
                                паддинг до самого длинного примера в батче
-        :param padding_len: длина, до которой дополняются паддингом все примеры без ответов
         :param device: устройство, на котором будет исполняться запрос
         """
         self.with_titles = with_titles
         self.exclude_nonstandard = exclude_nonstandard
-        super().__init__(path_to_data, split, max_num_examples, is_uncased, with_answers,
-                         mask_p, max_span_len, num_examples_per_doc,
-                         max_num_retries_per_ex, min_masked_spans_per_ex, max_masked_spans_per_ex,
-                         pretrained_tokenizer, max_sent_len, overlap, eq_max_padding, padding_len, device)
+        super().__init__(path_to_data, split, max_num_examples, is_uncased, with_answers, mask_p, max_span_len,
+                         num_examples_per_doc, max_num_retries_per_ex, min_masked_spans_per_ex, max_masked_spans_per_ex,
+                         pretrained_tokenizer, max_full_ex_len, max_only_context_len, overlap, eq_max_padding, device)
 
     def _read_docs(self, path_to_data: str) -> List[str]:
         assert self.split in ['train', 'valid', 'test', 'test_hand_title']
@@ -366,9 +366,10 @@ class StoriesRandomMaskTextInfillDataset(RandomMaskTextInfillDataset):
 
 class MarkedUpTextInfillDataset(TextInfillDataset):
     def __init__(self, path_to_data: str, split: str = None, max_num_examples=None,
-                 is_uncased=False, with_answers=True, other_label: str = '0', label2type=None,
-                 pretrained_tokenizer: str = None, max_sent_len=768, overlap=256, eq_max_padding=True, padding_len=1024,
-                 device="cuda:0"):
+                 is_uncased=False, with_answers=True,
+                 other_label: str = '0', label2type=None, mask_types: Optional[List[Enum]] = None,
+                 pretrained_tokenizer: str = None, max_full_ex_len=768, max_only_context_len=1024, overlap=256,
+                 eq_max_padding=True, device="cuda:0", **kwargs):
         """
         :param path_to_data: путь к директории с данными, которые необходимо предварительно замаскировать, или к размеченному '.pkl' файлу
         :param split: тип среза данных: train, val, test
@@ -377,22 +378,24 @@ class MarkedUpTextInfillDataset(TextInfillDataset):
         :param with_answers: добавлять ли к замаскированному запросу ответы (false, если в данных нет ответов)
         :param other_label: метка для неперсональных данных
         :param label2type: функция для конвертации названия метки в enum тип маски
+        :param mask_types: отсортированный список всех возможных типов масок
         :param pretrained_tokenizer: путь к сохранённым параметрам токенизатора
-        :param max_sent_len: максимальное количество токенов в примере
+        :param max_full_ex_len: максимальное количество токенов в примере
+        :param max_only_context_len: максимальное количество токенов для запроса без ответа
         :param overlap: пересечение последовательных частей предложений
-        :param eq_max_padding: паддинг до максимальной указанной длины для всех примеров или
+        :param eq_max_padding: паддинг до max_full_ex_len или
                                паддинг до самого длинного примера в батче
-        :param padding_len: длина, до которой дополняются паддингом все примеры без ответов
         :param device: устройство, на котором будет исполняться запрос
         """
         self.other_label = other_label
         self._get_type = label2type if label2type is not None else get_ngram_type
-        super().__init__(path_to_data, split, max_num_examples, is_uncased, with_answers,
-                         pretrained_tokenizer, max_sent_len, overlap, eq_max_padding, padding_len, device)
+        self._p_mask_types = mask_types if mask_types is not None else list(MaskNgramType)
+        super().__init__(path_to_data, split, max_num_examples, is_uncased, with_answers, pretrained_tokenizer,
+                         max_full_ex_len, max_only_context_len, overlap, eq_max_padding, device)
 
     @property
     def _mask_types(self) -> List[Enum]:
-        return list(MaskNgramType)
+        return self._p_mask_types
 
     def _read_data(self, path_to_data: str) -> List[Tuple[str, str, List[List[Tuple[Enum, int, int]]]]]:
         docs = self._read_docs(path_to_data)
@@ -424,12 +427,13 @@ class MarkedUpTextInfillDataset(TextInfillDataset):
 
 class FromListMarkedUpTextInfillDataset(MarkedUpTextInfillDataset):
     def __init__(self, path_to_data: str, marked_up_docs: Tuple[List[str], List[List[str]], List[List[str]]],
-                 split: str = None, max_num_examples=None,
-                 is_uncased=False, with_answers=True, other_label: str = '0', label2type=None,
-                 pretrained_tokenizer: str = None, max_sent_len=1024, overlap=256, eq_max_padding=True, padding_len=1024,
-                 device="cuda:0"):
+                 split: str = None, max_num_examples=None, is_uncased=False, with_answers=True,
+                 other_label: str = '0', label2type=None, mask_types: Optional[List[Enum]] = None,
+                 pretrained_tokenizer: str = None, max_full_ex_len=1024, max_only_context_len=1024, overlap=256,
+                 eq_max_padding=True, device="cuda:0", **kwargs):
         """
-        :param path_to_data: путь к директории с данными, которые необходимо предварительно замаскировать, или к размеченному '.pkl' файлу
+        :param path_to_data: фиктивный путь к директории с данными, которые необходимо предварительно замаскировать,
+                             можно использовать для кэширования данных в '.pkl' файл
         :param marked_up_docs: размеченные данные в формате (id документа, список слов в документе, список классов/меток слов в документе)
         :param split: тип среза данных: train, val, test
         :param max_num_examples: максимальное количество документов
@@ -437,17 +441,19 @@ class FromListMarkedUpTextInfillDataset(MarkedUpTextInfillDataset):
         :param with_answers: добавлять ли к замаскированному запросу ответы (false, если в данных нет ответов)
         :param other_label: метка для неперсональных данных
         :param label2type: функция для конвертации названия метки в enum тип маски
+        :param mask_types: отсортированный список всех возможных типов масок
         :param pretrained_tokenizer: путь к сохранённым параметрам токенизатора
-        :param max_sent_len: максимальное количество токенов в примере
+        :param max_full_ex_len: максимальное количество токенов в примере
+        :param max_only_context_len: максимальное количество токенов для запроса без ответа
         :param overlap: пересечение последовательных частей предложений
-        :param eq_max_padding: паддинг до максимальной указанной длины для всех примеров или
+        :param eq_max_padding: паддинг до max_full_ex_len или
                                паддинг до самого длинного примера в батче
-        :param padding_len: длина, до которой дополняются паддингом все примеры без ответов
         :param device: устройство, на котором будет исполняться запрос
         """
         self.marked_up_docs = marked_up_docs
-        super().__init__(path_to_data, split, max_num_examples, is_uncased, with_answers, other_label, label2type,
-                         pretrained_tokenizer, max_sent_len, overlap, eq_max_padding, padding_len, device)
+        super().__init__(path_to_data, split, max_num_examples, is_uncased, with_answers, other_label,
+                         label2type, mask_types, pretrained_tokenizer, max_full_ex_len, max_only_context_len, overlap,
+                         eq_max_padding, device)
 
     def _read_docs(self, path_to_data: str) -> Tuple[List[str], List[List[str]], List[List[str]]]:
         return self.marked_up_docs
@@ -567,20 +573,20 @@ class DatasetType(Enum):
     I2B2FOURTEEN = 4
 
 
-def get_text_infill_dataset(dataset, *args, **kwargs) -> TextInfillDataset:
-    if not isinstance(dataset, DatasetType):
-        dataset = DatasetType[dataset.upper()]
+def get_text_infill_dataset(dataset_type, *args, **kwargs) -> TextInfillDataset:
+    if isinstance(dataset_type, str):
+        dataset_type = DatasetType[dataset_type.upper()]
 
-    if dataset == DatasetType.ARXIV_CS_ABSTRACTS:
+    if dataset_type == DatasetType.ARXIV_CS_ABSTRACTS:
         d = ArxivRandomMaskTextInfillDataset(*args, **kwargs)
-    elif dataset == DatasetType.ROC_STORIES:
-        d = StoriesRandomMaskTextInfillDataset(*args, **kwargs)
-    elif dataset == DatasetType.ROC_STORIES_NO_TITLE:
+    elif dataset_type == DatasetType.ROC_STORIES:
+        d = StoriesRandomMaskTextInfillDataset(**kwargs)
+    elif dataset_type == DatasetType.ROC_STORIES_NO_TITLE:
         kwargs['with_titles'] = False
-        d = StoriesRandomMaskTextInfillDataset(*args, **kwargs)
-    elif dataset == DatasetType.I2B2SIX:
+        d = StoriesRandomMaskTextInfillDataset(**kwargs)
+    elif dataset_type == DatasetType.I2B2SIX:
         d = I2b2SixNerDatasetMarkedUpTextInfillDataset(*args, **kwargs)
-    elif dataset == DatasetType.I2B2FOURTEEN:
+    elif dataset_type == DatasetType.I2B2FOURTEEN:
         d = I2b2FourteenNerDatasetMarkedUpTextInfillDataset(*args, **kwargs)
     else:
         assert False, "There is no such type of dataset"

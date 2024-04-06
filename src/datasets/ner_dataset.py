@@ -1,3 +1,4 @@
+import pickle
 import xml.etree.ElementTree as ET
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -7,6 +8,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
+from anonymization.base import Anonymization
 from datasets.tokenization import WordPieceTokenizer
 
 LABEL_MEMBERSHIP = [
@@ -51,19 +53,20 @@ LABEL_MEMBERSHIP = [
 
 
 class NerDataset(Dataset, ABC):
-    def __init__(self, path_to_folder: str, anonymization=None,
+    def __init__(self, path_to_folder: str, anonymization: Optional[Anonymization] = None,
                  label_aliases: List[Tuple[str, List[str]]] = None, other_label='O',
                  is_uncased=False, pretrained_tokenizer: str = None,
-                 max_length=100, overlap=40, eq_max_padding=True,
-                 device="cuda:0"):
+                 max_token_number=100, overlap=40, eq_max_padding=True,
+                 cashed_data_path: str = None, device="cuda:0", **kwargs):
         """
-        :param path_to_folder: путь к директории с xml файлами, содержащими размеченные данные
+        :param path_to_folder: путь к директории с xml файлами, содержащими размеченные данные /
+                               путь к .pkl файлу, в котором данные приведены к нужному формату
         :param anonymization: класс для обезличивания защищённых данных (None -> без обезличивания)
         :param label_aliases: упорядоченный список пар меток и их возможных псевдонимов
         :param other_label: метка для незащищаемой сущности
         :param is_uncased: приводить все символы к нижнему регистру или нет
         :param pretrained_tokenizer: путь к сохранённым параметрам токенизатора
-        :param max_length: максимальное количество токенов в примере
+        :param max_token_number: максимальное количество токенов в примере
         :param overlap: пересечение последовательных частей предложений
         :param eq_max_padding: паддинг до максимальной указанной длины для всех примеров или
                                паддинг до самого длинного примера в батче
@@ -85,6 +88,44 @@ class NerDataset(Dataset, ABC):
         # Start of reading files
         self.is_uncased = is_uncased
         self.eq_max_padding = eq_max_padding
+        self.cashed_data_path = cashed_data_path
+        # ([id документа/записи, ...], [List[подряд идущих слов с одной меткой], ...],
+        #  [List[Конкретная категория], ...], [List[Общая категория], ...], [List[id категории], ...])
+        if path.suffix != '.pkl':
+            (record_ids, tokenized_source_list,
+             specific_category_list, general_category_list, tokenized_target_list) = self._read_data(path)
+            cashed_data_path = path.with_suffix(".pkl")
+            with open(str(cashed_data_path), 'wb') as f:
+                pickle.dump((record_ids, tokenized_source_list,
+                             specific_category_list, general_category_list, tokenized_target_list), f)
+        else:
+            with open(str(path), 'rb') as f:
+                (record_ids, tokenized_source_list,
+                 specific_category_list, general_category_list, tokenized_target_list) = pickle.load(f)
+
+        if anonymization is not None:
+            tokenized_source_list = anonymization(general_category_list, specific_category_list, tokenized_source_list)
+        # Data tokenization
+        self.tokenizer = WordPieceTokenizer(tokenized_source_list,
+                                            self.label2index[self.pad_label], pad_flag=eq_max_padding,
+                                            max_sent_len=max_token_number, overlap=overlap,
+                                            pretrained_name=pretrained_tokenizer)
+        self._record_ids, self._tokenized_source_list, self._tokenized_target_list = [], [], []
+        for record_id, sentence, labels in zip(record_ids, tokenized_source_list, tokenized_target_list):
+            tokenized = self.tokenizer(sentence, labels)
+            self._record_ids.extend([f"{record_id}:{-i}" for i in range(len(tokenized[0]) - 1, -1, -1)])
+            self._tokenized_source_list.extend(tokenized[0])
+            self._tokenized_target_list.extend(tokenized[1])
+        self.record2idx = {record_id: i for i, record_id in enumerate(self._record_ids)}
+        self._record_ids = np.array(self._record_ids)
+        self.device = device
+
+    def _read_data(self, path: Path):
+        """
+        Возвращает из указанной директории данные в формате
+        ([id документа/записи, ...], [List[подряд идущих слов с одной меткой], ...],
+        [List[Конкретная категория], ...], [List[Общая категория], ...], [List[id категории], ...])
+        """
         # For anonymization
         specific_category_list = []
         general_category_list = []
@@ -100,22 +141,7 @@ class NerDataset(Dataset, ABC):
             for aliases in target_batch:
                 general_category_list.append([self.alias2label.get(alias, self.other_label) for alias in aliases])
                 tokenized_target_list.append([self.label2index[label] for label in general_category_list[-1]])
-        if anonymization is not None:
-            tokenized_source_list = anonymization(general_category_list, specific_category_list, tokenized_source_list)
-        # Data tokenization
-        self.tokenizer = WordPieceTokenizer(tokenized_source_list,
-                                            self.label2index[self.pad_label], pad_flag=eq_max_padding,
-                                            max_sent_len=max_length, overlap=overlap,
-                                            pretrained_name=pretrained_tokenizer)
-        self._record_ids, self._tokenized_source_list, self._tokenized_target_list = [], [], []
-        for record_id, sentence, labels in zip(record_ids, tokenized_source_list, tokenized_target_list):
-            tokenized = self.tokenizer(sentence, labels)
-            self._record_ids.extend([f"{record_id}:{-i}" for i in range(len(tokenized[0]) - 1, -1, -1)])
-            self._tokenized_source_list.extend(tokenized[0])
-            self._tokenized_target_list.extend(tokenized[1])
-        self.record2idx = {record_id: i for i, record_id in enumerate(self._record_ids)}
-        self._record_ids = np.array(self._record_ids)
-        self.device = device
+        return record_ids, tokenized_source_list, specific_category_list, general_category_list, tokenized_target_list
 
     @property
     @abstractmethod
@@ -237,9 +263,9 @@ class I2b2FourteenNerDataset(NerDataset):
         return phi_type
 
 
-def get_ner_dataset(data_type: str, *args, **kwargs) -> Optional[NerDataset]:
-    if data_type == "2006":
+def get_ner_dataset(dataset_type: str, *args, **kwargs) -> Optional[NerDataset]:
+    if dataset_type == "i2b2six":
         return I2b2SixNerDataset(*args, **kwargs)
-    elif data_type == "2014":
+    elif dataset_type == "i2b2fourteen":
         return I2b2FourteenNerDataset(*args, **kwargs)
     return None

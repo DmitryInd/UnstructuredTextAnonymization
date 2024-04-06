@@ -3,6 +3,7 @@ from typing import List
 import numpy as np
 
 
+# TODO Заменить всё на torchmetrics
 def get_accuracy(y_true: List[str], y_pred: List[str]):
     """Считает точность между двумя наборами строк"""
     scores = []

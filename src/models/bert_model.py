@@ -8,7 +8,7 @@ from transformers import BertModel
 class PretrainedBertNER(pl.LightningModule):
     def __init__(self, pretrained_name: str, encoder_vocab_size: int,
                  lr: float, total_steps: int, adaptation_epochs: int, div_factor: int,
-                 num_classes: int, other_index: int, pad_index: int):
+                 num_classes: int, other_index: int, pad_index: int, **kwargs):
         """
         :param pretrained_name: название предобученного BERT из hugging face hub
         :param encoder_vocab_size: итоговый размер словаря (с добавлением или удалением части токенов)

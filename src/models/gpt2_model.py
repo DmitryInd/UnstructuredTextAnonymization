@@ -9,7 +9,7 @@ from transformers import GPT2LMHeadModel
 class PretrainedGPT2TextInfilling(pl.LightningModule):
     def __init__(self, pretrained_name: str, vocab_size: int, train_context,
                  lr: float, total_steps: int, adaptation_part: int, div_factor: int,
-                 end_infill_id=None):
+                 end_infill_id=None, **kwargs):
         """
         :param pretrained_name: название предобученной GPT2 модели из hugging face hub
         :param vocab_size: итоговый размер словаря (с добавлением или удалением части токенов)
@@ -58,7 +58,7 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
             total_steps=self.total_steps,
             max_lr=self.lr,
             pct_start=self.adaptation_part,
-            anneal_strategy='linear',
+            anneal_strategy='cos',
             final_div_factor=self.div_factor
         )
         return [optimizer], [scheduler]

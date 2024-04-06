@@ -8,7 +8,8 @@ from anonymization.base import Anonymization
 
 
 class ReferenceBookAnonymization(Anonymization):
-    def __init__(self, path_to_first_male_names: str,
+    def __init__(self,
+                 path_to_first_male_names: str,
                  path_to_first_femail_names: str,
                  path_to_last_names: str,
                  path_to_full_addresses: str,
@@ -18,8 +19,9 @@ class ReferenceBookAnonymization(Anonymization):
                  path_to_streets: str,
                  path_to_organizations: str,
                  path_to_hospitals: str,
-                 path_to_professions: str):
-        super().__init__()
+                 path_to_professions: str,
+                 other_label: str = 'O'):
+        super().__init__(other_label)
         self.professions = self._read_ref_book(path_to_professions)
         self.hospitals = self._read_ref_book(path_to_hospitals)
         self.organizations = self._read_ref_book(path_to_organizations)
@@ -39,17 +41,18 @@ class ReferenceBookAnonymization(Anonymization):
 
         return ref_book_list
 
-    def __call__(self, general_category_list: List[List[str]], specific_category_list: List[List[str]],
-                 source_text_list: List[List[str]]) -> List[List[str]]:
-        anonymized_text_list = []
+    def get_substitutions(self, general_category_list: List[List[str]], specific_category_list: List[List[str]],
+                          source_text_list: List[List[str]]) -> List[List[str]]:
+        doc_substitutions = []
         for general_categories, specific_categories, entities \
                 in zip(general_category_list, specific_category_list, source_text_list):
-            anonymized_text = []
+            substitutions = []
             for general_category, specific_category, entity in zip(general_categories, specific_categories, entities):
-                anonymized_text.append(self._generate_entity(general_category, specific_category, entity))
-            anonymized_text_list.append(anonymized_text)
+                if general_category != self.other_label:
+                    substitutions.append(self._generate_entity(general_category, specific_category, entity))
+            doc_substitutions.append(substitutions)
 
-        return anonymized_text_list
+        return doc_substitutions
 
     def _generate_entity(self, general_category: str, specific_category: str, entity: str):
         deid_entity = entity

@@ -18,24 +18,22 @@ if __name__ == '__main__':
     data_config = yaml.load(open("configs/roc_stories_data_config.yaml", 'r'), Loader=yaml.Loader)
     model_config = yaml.load(open("configs/gpt2-small_model_config.yaml", 'r'), Loader=yaml.Loader)
     # Data processing
-    # train_dataset = get_text_infill_dataset(dataset=data_config["dataset_type"],
+    # train_dataset = get_text_infill_dataset(dataset_type=data_config["dataset_type"],
     #                                         path_to_data=data_config["train_data_path"],
     #                                         split="train",
     #                                         other_label=data_config["other_label"],
     #                                         is_uncased=data_config["is_uncased"],
     #                                         pretrained_tokenizer="data/tokenizer/official_gpt2_encoder",
-    #                                         max_sent_len=data_config["max_token_number"],
+    #                                         max_full_ex_len=data_config["max_token_number"],
     #                                         overlap=data_config["overlap"],
     #                                         device='cpu')
 
-    train_dataset = get_text_infill_dataset(dataset=data_config["dataset_type"],
-                                            path_to_data=data_config["train_data_path"],
-                                            split="train",
+    train_dataset = get_text_infill_dataset(dataset_type=data_config["dataset_type"],
+                                            path_to_data=data_config["train_data_path"], split="train",
                                             is_uncased=data_config["is_uncased"],
                                             pretrained_tokenizer="data/tokenizer/official_gpt2_encoder",
-                                            max_sent_len=data_config["max_token_number"],
-                                            overlap=data_config["overlap"],
-                                            mask_p=data_config["mask_p"],
+                                            max_full_ex_len=data_config["max_full_ex_len"],
+                                            overlap=data_config["overlap"], mask_p=data_config["mask_p"],
                                             max_span_len=data_config["max_span_len"],
                                             max_num_examples=data_config["max_num_train_examples"],
                                             num_examples_per_doc=data_config["num_examples_per_doc"],
@@ -44,21 +42,18 @@ if __name__ == '__main__':
                                             max_masked_spans_per_ex=data_config["max_masked_spans_per_ex"],
                                             device='cpu')
 
-    val_dataset = get_text_infill_dataset(dataset=data_config["dataset_type"],
-                                          path_to_data=data_config["validate_data_path"],
-                                          split="valid",
+    val_dataset = get_text_infill_dataset(dataset_type=data_config["dataset_type"],
+                                          path_to_data=data_config["validate_data_path"], split="valid",
                                           is_uncased=data_config["is_uncased"],
                                           pretrained_tokenizer="data/tokenizer/official_gpt2_encoder",
-                                          max_sent_len=data_config["max_token_number"],
-                                          overlap=data_config["overlap"],
-                                          mask_p=data_config["mask_p"],
+                                          max_full_ex_len=data_config["max_full_ex_len"],
+                                          overlap=data_config["overlap"], mask_p=data_config["mask_p"],
                                           max_span_len=data_config["max_span_len"],
                                           max_num_examples=data_config["max_num_valid_examples"],
                                           num_examples_per_doc=data_config["num_examples_per_doc"],
                                           max_num_retries_per_ex=data_config["max_num_retries_per_ex"],
                                           min_masked_spans_per_ex=data_config["min_masked_spans_per_ex"],
-                                          max_masked_spans_per_ex=data_config["max_masked_spans_per_ex"],
-                                          device='cpu')
+                                          max_masked_spans_per_ex=data_config["max_masked_spans_per_ex"], device='cpu')
     print(f"Len of train dataset: {len(train_dataset)}\nLen of validation dataset: {len(val_dataset)}")
     train_dataloader = DataLoader(train_dataset, shuffle=True,
                                   batch_size=data_config["batch_size"],

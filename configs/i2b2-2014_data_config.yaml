@@ -1,10 +1,9 @@
+dataset_type: "i2b2fourteen"
 train_data_path: "./data/token/i2b2-2014/train"
-train_data_type: "2014"
 validate_data_path: "./data/token/i2b2-2014/test"
-val_data_type: "2014"
 other_label: "O"
 is_uncased: True
-pretrained_tokenizer_path: "bert-large-uncased" # "bert-base-cased" / "bert-base-uncased" / "bert-large-cased" / "bert-large-uncased"
+pretrained_tokenizer: "bert-large-uncased" # "bert-base-cased" / "bert-base-uncased" / "bert-large-cased" / "bert-large-uncased"
 max_token_number: 100
 overlap: 40
 eq_max_padding: True

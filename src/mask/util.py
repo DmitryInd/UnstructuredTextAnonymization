@@ -34,8 +34,9 @@ def align_char_mask_to_tokens(d: str, d_toks: List[str], masked_char_spans: List
     #     raise ValueError('Tokens could not be aligned to document')
 
     # Align character spans to model tokens
-    masked_token_spans = [align_charspan_to_tokenspan(d, d_toks, char_off, char_len)[2:] for t, char_off, char_len in
-                          masked_char_spans]
+    x_tok_offsets, x_tok_residuals = tokens_offsets_and_residuals_memorized(d, tuple(d_toks))
+    masked_token_spans = [align_charspan_to_tokenspan(d, d_toks, x_tok_offsets, x_tok_residuals, char_off, char_len)[2:]
+                          for t, char_off, char_len in masked_char_spans]
 
     if ensure_valid_bounds_in_spans and not masked_spans_bounds_valid(masked_token_spans, len(d_toks)):
         raise ValueError('Alignment produced invalid token spans')
@@ -79,12 +80,15 @@ def masked_spans_overlap(masked_spans):
     return overlap
 
 
-def align_charspan_to_tokenspan(x, x_tok, char_offset, char_len) -> Tuple[int, int, int, int]:
+def align_charspan_to_tokenspan(x: str, x_tok: List[str], x_tok_offsets: List[int], x_tok_residuals: List[str],
+                                char_offset: int, char_len: int) -> Tuple[int, int, int, int]:
     """
     Переводит запись текстового отрезка от значений в символах к значениям в токенах. Выравнивает сдвиги между собой.
     :param x: строка текста
     :param x_tok: токены, на которые разбита строка
-    :param char_offset: сдвиги отрезка по символам
+    :param x_tok_offsets: список сдвигов на начало токенов
+    :param x_tok_residuals: список оставшихся перед/между/после токенами отрезков, которые не были разбиты на токены
+    :param char_offset: сдвиг отрезка по символам
     :param char_len: длина отрезка по символам
     :return: (сдвиг по символам, длина по символам, сдвиг по токенам, длина по токенам)
     """
@@ -93,20 +97,12 @@ def align_charspan_to_tokenspan(x, x_tok, char_offset, char_len) -> Tuple[int, i
     if char_offset < 0 or char_len < 0 or (char_offset + char_len) > len(x):
         raise ValueError()
 
-    if type(x_tok) != tuple:
-        x_tok = tuple(x_tok)
-    x_tok_offsets, x_tok_residuals, x_tok_rres = _tokens_offsets_and_residuals_memorized(x, x_tok)
-    # if None in x_tok_offsets:
-    #     raise ValueError()
-    x_tok_residuals.append(x_tok_rres)
-    x_tok_lens = [len(t) for t in x_tok]
-
     # Build char_idx_to_token of appropriate token for each cursor index
     # NOTE: This is one greater than len(x) because cursor can be at beginning or end.
     char_idx_to_token = [0] * len(x_tok_residuals[0])
     for i in range(len(x_tok)):
         if x_tok_offsets[i] is not None:
-            char_idx_to_token += [i] * (x_tok_lens[i] + len(x_tok_residuals[i + 1]))
+            char_idx_to_token += [i] * (len(x_tok[i]) + len(x_tok_residuals[i + 1]))
     char_idx_to_token += [len(x_tok) - 1]
 
     if char_len == 0:
@@ -117,11 +113,11 @@ def align_charspan_to_tokenspan(x, x_tok, char_offset, char_len) -> Tuple[int, i
     else:
         selected_x_tok = set(char_idx_to_token[char_offset:char_offset + char_len])
         token_offset = min(selected_x_tok)
-        token_len = max(selected_x_tok) - token_offset + 1
+        token_end = max(selected_x_tok)
+        token_len = token_end - token_offset + 1
 
         char_offset = x_tok_offsets[token_offset]
-        token_end = token_offset + token_len - 1
-        char_end = x_tok_offsets[token_end] + x_tok_lens[token_end]
+        char_end = x_tok_offsets[token_end] + len(x_tok[token_end])
         char_len = char_end - char_offset
 
     return char_offset, char_len, token_offset, token_len
@@ -132,8 +128,8 @@ def apply_masked_spans(doc: List[int], masked_spans: List[Tuple[Enum, int, int]]
     """
     Заменяет токены маскируемых отрезков на маскировочные токены
     :param doc: текст в формате списка id токенов
-    :param masked_spans: список замаскированных отрезков текста в формате (тип, сдвиг, длина)
-    отрезки должны быть отсортированы по сдвигу в порядке возрастания!!!
+    :param masked_spans: список замаскированных отрезков текста в формате (тип, сдвиг, длина);
+                         отрезки должны быть отсортированы по сдвигу в порядке возрастания!!!
     :param mask_type_to_substitution: словарь id маскировочных токенов для каждого типа маски
     :return: (контекст с убранным замаскированным текстом, список замаскированных отрезков: (тип, список токенов))
     """
@@ -179,15 +175,16 @@ def tokens_offsets(x: str, x_tok: Iterable[str]) -> List[int]:
     """
     if not isinstance(x_tok, tuple):
         x_tok = tuple(x_tok)
-    return _tokens_offsets_and_residuals_memorized(x, x_tok)[0]
+    return tokens_offsets_and_residuals_memorized(x, x_tok)[0]
 
 
-def _tokens_offsets_and_residuals_memorized(x: str, x_tok: Tuple[str]) -> Tuple[List[int], List[str], str]:
+def tokens_offsets_and_residuals_memorized(x: str, x_tok: Tuple[str, ...]) -> Tuple[List[int], List[str]]:
     """
     Исследует, как текст был разбит на токены.
     :param x: строка текста
     :param x_tok: текстовые токены, на которые делится строка
-    :return: (список сдвигов на начало токенов; список оставшихся строк между токенами, которые остались неразмеченными; оставшаяся неразмеченной строка после всех токенов)
+    :return: (список сдвигов на начало токенов;
+              список оставшихся перед/между/после токенами отрезков, которые не были разбиты на токены)
     """
     x_remaining_off = 0
     x_remaining = x[:]
@@ -201,6 +198,7 @@ def _tokens_offsets_and_residuals_memorized(x: str, x_tok: Tuple[str]) -> Tuple[
             t_res = x_remaining[:t_off_in_x_remaining]
             t_off = x_remaining_off + t_off_in_x_remaining
         except:
+            t_off_in_x_remaining = None
             t_off = None
             t_res = ''
 
@@ -212,6 +210,54 @@ def _tokens_offsets_and_residuals_memorized(x: str, x_tok: Tuple[str]) -> Tuple[
             x_remaining_off += trim
             x_remaining = x_remaining[trim:]
 
-    rres = x_remaining
+    residuals.append(x_remaining)
 
-    return offsets, residuals, rres
+    return offsets, residuals
+
+
+def convert_masks_to_segments(doc: str, masks: List[Tuple[Enum, int, int]], other_label: str = 'O') \
+        -> Tuple[List[str], List[str]]:
+    """
+    Конвертирует документ и набор масок для него в последовательности отрезков и их типов
+    :param doc: документ в формате строки
+    :param masks: набор масок для документа: [(тип, сдвиг, длина), ...]
+    :param other_label: метка для обычного текста в формате строки
+    return: категории сущностей в формате [список категорий слов в документе, ...];
+            исходный текст в формате [список слов в документе, ...]
+    """
+    category_list = []
+    source_text_list = []
+    cursor = 0
+    for m_type, offset, length in masks:
+        if offset > cursor:
+            category_list.append(other_label)
+            source_text_list.append(doc[cursor: offset])
+        category_list.append(m_type.name)
+        source_text_list.append(doc[offset: offset + length])
+        cursor = offset + length
+    if cursor < len(doc):
+        category_list.append(other_label)
+        source_text_list.append(doc[cursor:])
+
+    return category_list, source_text_list
+
+
+def convert_masked_docs_to_segments_set(masked_docs: List[Tuple[str, str, List[List[Tuple[Enum, int, int]]]]],
+                                        other_label: str = 'O') -> Tuple[List[List[str]], List[List[str]]]:
+    """
+    Конвертирует набор замаскированных документов и набор масок для него в последовательности отрезков и их типов
+    :param masked_docs: [(индекс документа, текст документа,
+                          список наборов масок для него: [[(тип, сдвиг, длина), ...], ...]), ...]
+    :param other_label: метка для обычного текста в формате строки
+    return: категории сущностей в формате [список категорий отрезков в документе, ...];
+            исходный текст в формате [список отрезков в документе, ...]
+    """
+    category_lists = []
+    source_text_lists = []
+    for _, doc, masks_set in masked_docs:
+        for masks in masks_set:
+            category_list, source_text_list = convert_masks_to_segments(doc, masks, other_label)
+            category_lists.append(category_list)
+            source_text_lists.append(source_text_list)
+
+    return category_lists, source_text_lists

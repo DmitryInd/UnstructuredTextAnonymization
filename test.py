@@ -9,7 +9,7 @@ from transformers import set_seed
 sys.path.insert(1, "./src")
 from datasets.ner_dataset import get_ner_dataset
 from models.bert_model import PretrainedBertNER
-from utils.metrics import Statistics
+ from utils.ner_metrics import Statistics
 from utils.log_reader import TensorBoardReader
 from anonymization.ref_book import ReferenceBookAnonymization
 
@@ -30,7 +30,8 @@ if __name__ == '__main__':
                                                anon_config['path_to_streets'],
                                                anon_config['path_to_organizations'],
                                                anon_config['path_to_hospitals'],
-                                               anon_config['path_to_professions'])
+                                               anon_config['path_to_professions'],
+                                               other_label=data_config['other_label'])
     test_dataset = get_ner_dataset(data_type=data_config['val_data_type'],
                                    path_to_folder=data_config["validate_data_path"], anonymization=anonymization,
                                    is_uncased=data_config["is_uncased"],

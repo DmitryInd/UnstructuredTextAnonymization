@@ -31,20 +31,21 @@ if __name__ == '__main__':
                                                anon_config['path_to_streets'],
                                                anon_config['path_to_organizations'],
                                                anon_config['path_to_hospitals'],
-                                               anon_config['path_to_professions'])
-    train_dataset = get_ner_dataset(data_type=data_config["train_data_type"],
+                                               anon_config['path_to_professions'],
+                                               other_label=data_config['other_label'])
+    train_dataset = get_ner_dataset(dataset_type=data_config["dataset_type"],
                                     path_to_folder=data_config["train_data_path"],
                                     anonymization=anonymization,
                                     is_uncased=data_config["is_uncased"],
                                     pretrained_tokenizer=data_config["pretrained_tokenizer_path"],
-                                    max_length=data_config["max_token_number"],
+                                    max_token_number=data_config["max_token_number"],
                                     overlap=data_config["overlap"],
                                     eq_max_padding=data_config["eq_max_padding"])
-    val_dataset = get_ner_dataset(data_type=data_config["val_data_type"],
+    val_dataset = get_ner_dataset(dataset_type=data_config["dataset_type"],
                                   path_to_folder=data_config["validate_data_path"],
                                   is_uncased=data_config["is_uncased"],
                                   pretrained_tokenizer=data_config["pretrained_tokenizer_path"],
-                                  max_length=data_config["max_token_number"],
+                                  max_token_number=data_config["max_token_number"],
                                   overlap=data_config["overlap"],
                                   eq_max_padding=data_config["eq_max_padding"])
     print(f"Len of train dataset: {len(train_dataset)}\nLen of validation dataset: {len(val_dataset)}")

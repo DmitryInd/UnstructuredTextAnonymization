@@ -29,22 +29,22 @@ if __name__ == '__main__':
                                                 path_to_cashed_data=anon_config["path_to_cashed_data"],
                                                 is_uncased=anon_config["is_uncased"],
                                                 pretrained_tokenizer=anon_config["pretrained_tokenizer"],
-                                                max_sent_len=anon_config["max_sent_len"],
-                                                padding_len=anon_config["padding_len"],
+                                                max_full_ex_len=anon_config["max_full_ex_len"],
+                                                max_only_context_len=anon_config["max_only_context_len"],
                                                 overlap=anon_config["overlap"])
-    train_dataset = get_ner_dataset(data_type=data_config["train_data_type"],
+    train_dataset = get_ner_dataset(dataset_type=data_config["dataset_type"],
                                     path_to_folder=data_config["train_data_path"],
                                     anonymization=anonymization,
                                     is_uncased=data_config["is_uncased"],
                                     pretrained_tokenizer=data_config["pretrained_tokenizer_path"],
-                                    max_length=data_config["max_token_number"],
+                                    max_token_number=data_config["max_token_number"],
                                     overlap=data_config["overlap"],
                                     eq_max_padding=data_config["eq_max_padding"])
-    val_dataset = get_ner_dataset(data_type=data_config["val_data_type"],
+    val_dataset = get_ner_dataset(dataset_type=data_config["dataset_type"],
                                   path_to_folder=data_config["validate_data_path"],
                                   is_uncased=data_config["is_uncased"],
                                   pretrained_tokenizer=data_config["pretrained_tokenizer_path"],
-                                  max_length=data_config["max_token_number"],
+                                  max_token_number=data_config["max_token_number"],
                                   overlap=data_config["overlap"],
                                   eq_max_padding=data_config["eq_max_padding"])
     print(f"Len of train dataset: {len(train_dataset)}\nLen of validation dataset: {len(val_dataset)}")

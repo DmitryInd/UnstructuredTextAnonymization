@@ -190,15 +190,16 @@ class OfficialGPT2Tokenizer:
     """
 
     def __init__(self, pretrained_path, mask_types: List[Enum], errors='replace',
-                 max_sent_len: int = None, overlap: int = None, pad_flag: bool = True, padding_len=None):
+                 max_full_ex_len: int = None, max_only_context_len: int = None, overlap: int = None,
+                 pad_flag: bool = True):
         """
         :param pretrained_path: директория с сохранёнными параметрами токенизаторов
         :param mask_types: типы масок, содержащихся во входных данных
         :param errors: способ обработки ошибок
-        :param max_sent_len: максимальное количество токенов в примере
+        :param max_full_ex_len: максимальное количество токенов в примере
+        :param max_only_context_len: максимальное количество токенов для запроса без ответа
         :param overlap: пересечение последовательных частей предложений
-        :param pad_flag: дополнять ли все примеры паддингом до padding_len | max_sent_len
-        :param padding_len: длина, до которой дополняются паддингом все примеры без ответов
+        :param pad_flag: дополнять ли все примеры паддингом до max_full_ex_len
         """
         # Load pretrained tokenizer for GPT2
         with open(Path(pretrained_path) / Path('encoder.json'), 'r') as f:
@@ -223,12 +224,10 @@ class OfficialGPT2Tokenizer:
         self.mask_type_to_id = None
         self.add_special_characters(mask_types)
         # Parameters for splitting text
-        self.max_sent_len = max_sent_len  # 1024
-        self.overlap = overlap
+        self.max_full_ex_len = max_full_ex_len  # 1024
+        self.max_only_context_len = max_only_context_len  # 3/4 * max_full_ex_len
+        self.overlap = max_full_ex_len * 3 // 16 if overlap is None and max_full_ex_len is not None else overlap
         self.pad_flag = pad_flag
-        self.padding_len = padding_len if padding_len is not None else max_sent_len
-        if max_sent_len is not None:
-            self.overlap = max_sent_len // 4 if overlap is None else overlap
 
     @staticmethod
     @lru_cache()
@@ -321,7 +320,7 @@ class OfficialGPT2Tokenizer:
         return bpe_tokens
 
     @staticmethod
-    def get_pairs(word: Tuple[str]) -> Set[Tuple[str, str]]:
+    def get_pairs(word: Tuple[str, ...]) -> Set[Tuple[str, str]]:
         """Return set of symbol pairs in a word.
 
         Word is represented as tuple of symbols (symbols being variable-length strings).
@@ -426,7 +425,7 @@ class OfficialGPT2Tokenizer:
         :return: список массивов токенов запросов для модели, список разметки запросов для CrossEntropy
         """
         special_ids = set([self.start_infill_id, self.end_infill_id] + list(self.mask_type_to_id.values()))
-        pad_flag = self.max_sent_len is not None and self.pad_flag
+        pad_flag = self.max_full_ex_len is not None and self.pad_flag
         overlap = 0 if self.overlap is None else self.overlap
         inputs = []
         markups = []  # Markups for cross-entropy loss
@@ -452,11 +451,9 @@ class OfficialGPT2Tokenizer:
                         example += answer
                         example += [self.end_infill_id]
 
-                assert len(example) <= self.max_sent_len
+                assert len(example) <= self.max_full_ex_len
 
-                full_len = len(example)
-                if pad_flag:
-                    full_len = self.max_sent_len if with_answers else self.padding_len
+                full_len = self.max_full_ex_len if pad_flag else len(example)
                 token_input = np.zeros((full_len, ))
                 markup = np.full((full_len, ), TargetType.PAD.value)
 
@@ -491,7 +488,13 @@ class OfficialGPT2Tokenizer:
         :param with_answer: нужно ли добавлять в запрос ответ
         :return: максимально допустимая длина контекста, количество масок в ней, позиция последней маски в контексте
         """
-        max_sent_len = 0 if self.max_sent_len is None else self.max_sent_len
+        if self.max_only_context_len is not None and not with_answer:
+            max_sent_len = self.max_only_context_len
+        elif self.max_full_ex_len is not None:
+            max_sent_len = self.max_full_ex_len
+        else:
+            max_sent_len = 0
+
         i, j = 0, 0  # context cursor, answers cursor
         last_mask_pos = -1
         query_len = 1
