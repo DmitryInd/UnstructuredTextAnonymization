@@ -5,6 +5,7 @@ other_label: "O"
 is_uncased: True
 pretrained_tokenizer: "bert-large-uncased" # "bert-base-cased" / "bert-base-uncased" / "bert-large-cased" / "bert-large-uncased"
 max_token_number: 100
+max_full_ex_len: 128
 overlap: 40
 eq_max_padding: True
 batch_size: 32

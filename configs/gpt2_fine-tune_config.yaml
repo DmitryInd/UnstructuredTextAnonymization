@@ -1,0 +1,8 @@
+pretrained_model_path: "gpt2"
+lr: 0.00001
+epochs: 50
+train_context: False
+adaptation_part: 0.5
+div_factor: 10000
+log_dir: "./gpt2-small"
+model_version: 7

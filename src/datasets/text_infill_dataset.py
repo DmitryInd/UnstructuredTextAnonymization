@@ -522,7 +522,7 @@ class I2b2FourteenNerDatasetMarkedUpTextInfillDataset(MarkedUpTextInfillDataset)
             tokenized_source_list.append(source_batch)
             tokenized_target_list.append([alias2label.get(alias, self.other_label) for alias in target_batch])
 
-        return record_ids, tokenized_source_list, tokenized_source_list
+        return record_ids, tokenized_source_list, tokenized_target_list
 
     def _read_file(self, path_to_file: str) -> Tuple[str, List[str], List[str]]:
         tree = ET.ElementTree(file=path_to_file)

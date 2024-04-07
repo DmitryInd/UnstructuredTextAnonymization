@@ -58,7 +58,7 @@ class PretrainedBertNER(pl.LightningModule):
             total_steps=self.total_steps,
             max_lr=self.lr,
             pct_start=0.1,
-            anneal_strategy='linear',
+            anneal_strategy='cos',
             final_div_factor=self.div_factor
         )
         return [optimizer], [scheduler]

@@ -24,7 +24,7 @@ class NgramsMaskFn(MaskFn):
         except:
             raise ValueError('Need to call nltk.download(\'punkt\')')
         self.p = p
-        self.max_ngram_mask_length=max_ngram_mask_length
+        self.max_ngram_mask_length = max_ngram_mask_length
 
     @staticmethod
     def mask_types() -> List[Enum]:

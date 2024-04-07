@@ -1,5 +1,6 @@
 import torch
 import pytorch_lightning as pl
+from torchmetrics.text import CharErrorRate
 from torch import nn
 from datasets.tokenization import TargetType
 from transformers import GPT2LMHeadModel
@@ -30,8 +31,9 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         self.total_steps = total_steps
         self.adaptation_part = adaptation_part
         self.train_context = train_context
-
         self.end_infill_id = end_infill_id
+        # self.train_cer = CharErrorRate()
+        # self.val_cer = CharErrorRate()
 
     def forward(self, x):
         x = self.model(x)  # B, L, C
@@ -70,15 +72,14 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         logits = logits.transpose(2, 1)  # B, L, C -> B, C, L
         loss_context = self.criterion(logits, labels_context[:, 1:])
         loss_infill = self.criterion(logits, labels_infill[:, 1:])
-
         loss = loss_infill
         if self.train_context:
             loss += loss_context
-
         self.log('train_loss', loss.item(), on_step=False, on_epoch=True, logger=True, prog_bar=True)
+
         # hard_pred = torch.argmax(logits, dim=-2)
-        # train_cer = cer(hard_pred, inputs)  # TODO Добавить подсчёт CER между ответами
-        # self.log('train_recall', self.train_recall, on_step=False, on_epoch=True, logger=True, prog_bar=True)
+        # self.train_cer.update(hard_pred, inputs)
+        # self.log('train_cer', self.train_cer.compute().item(), on_step=False, on_epoch=True, logger=True, prog_bar=True)
         return loss
 
     @torch.no_grad()
