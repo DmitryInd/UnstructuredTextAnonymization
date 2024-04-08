@@ -41,8 +41,8 @@ class ReferenceBookAnonymization(Anonymization):
 
         return ref_book_list
 
-    def get_substitutions(self, general_category_list: List[List[str]], specific_category_list: List[List[str]],
-                          source_text_list: List[List[str]]) -> List[List[str]]:
+    def _get_substitutions(self, general_category_list: List[List[str]], specific_category_list: List[List[str]],
+                           source_text_list: List[List[str]]) -> List[List[str]]:
         doc_substitutions = []
         for general_categories, specific_categories, entities \
                 in zip(general_category_list, specific_category_list, source_text_list):

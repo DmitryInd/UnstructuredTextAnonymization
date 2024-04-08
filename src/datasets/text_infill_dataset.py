@@ -15,9 +15,9 @@ from tqdm import tqdm
 
 from datasets.ner_dataset import LABEL_MEMBERSHIP
 from datasets.tokenization import OfficialGPT2Tokenizer
-from mask.n_gram import NgramsMaskFn, MaskNgramType
+from mask.base import MaskFn
+from mask.n_gram import MaskNgramType
 from mask.personal_entity import MaskEntityType
-from mask.util import masked_spans_bounds_valid, masked_spans_overlap
 
 RAW_DATA_DIR = str(Path(__file__).absolute().parents[2] / Path('data') / Path('token'))
 
@@ -87,7 +87,7 @@ class TextInfillDataset(Dataset, ABC):
         pass
 
     @abstractmethod
-    def _read_data(self, path_to_data: str) -> List[Tuple[str, str, List[List[Tuple[MaskNgramType, int, int]]]]]:
+    def _read_data(self, path_to_data: str) -> List[Tuple[str, str, List[List[Tuple[Enum, int, int]]]]]:
         """
         Считывает данные и возвращает их в формате: текст документа и список наборов масок для него
         :param path_to_data: путь до директории с данными в формате строки
@@ -117,24 +117,19 @@ class TextInfillDataset(Dataset, ABC):
         return collate_fn
 
 
-class RandomMaskTextInfillDataset(TextInfillDataset):
-    def __init__(self, path_to_data: str, split: str = None, max_num_examples=None, is_uncased=False, with_answers=True,
-                 mask_p=None, max_span_len=None, num_examples_per_doc=3,
-                 max_num_retries_per_ex=3, min_masked_spans_per_ex=None, max_masked_spans_per_ex=None,
+class MaskedTextInfillDataset(TextInfillDataset):
+    def __init__(self, path_to_data: str, masker: MaskFn, split: str = None,
+                 max_num_examples=None, is_uncased=False, with_answers=True,
                  pretrained_tokenizer: str = None, max_full_ex_len=1024,  max_only_context_len=None, overlap=256,
                  eq_max_padding=True, device="cuda:0", **kwargs):
         """
-        :param path_to_data: путь к директории с данными, которые необходимо предварительно замаскировать, или к размеченному '.pkl' файлу
+        :param path_to_data: путь к директории с данными, которые необходимо предварительно замаскировать,
+                             или к размеченному '.pkl' файлу
+        :param masker:
         :param split: тип среза данных: train, val, test
         :param max_num_examples: максимальное количество документов
         :param is_uncased: приводить ли все символы к нижнему регистру или нет
         :param with_answers: добавлять ли к замаскированному запросу ответы (false, если в данных нет ответов)
-        :param mask_p: вероятность замаскировать n-грамму, начиная с указанного слова
-        :param max_span_len: максимальная длина замаскированной n-граммы
-        :param num_examples_per_doc: количество различных разметок / маскировок одного документа
-        :param max_num_retries_per_ex: количество попыток корректно замаскировать документ для одной разметки
-        :param min_masked_spans_per_ex: минимальное количество масок в одной разметке документа
-        :param max_masked_spans_per_ex: максимальное количество масок в одной разметке документа
         :param pretrained_tokenizer: путь к сохранённым параметрам токенизатора
         :param max_full_ex_len: максимальное количество токенов в примере
         :param max_only_context_len: максимальное количество токенов для запроса без ответа
@@ -143,26 +138,17 @@ class RandomMaskTextInfillDataset(TextInfillDataset):
                                паддинг до самого длинного примера в батче
         :param device: устройство, на котором будет исполняться запрос
         """
-        # TODO Добавить возможность размечать случайными именованными метками
-        self.masker = NgramsMaskFn(mask_p, max_span_len)
-        self.num_examples_per_doc = num_examples_per_doc  # per document
-        self.max_num_retries_per_ex = max_num_retries_per_ex  # per example
-        self.min_masked_spans_per_ex = min_masked_spans_per_ex  # per example
-        self.max_masked_spans_per_ex = max_masked_spans_per_ex  # per example
+        self.masker = masker
         super().__init__(path_to_data, split, max_num_examples, is_uncased, with_answers, pretrained_tokenizer,
                          max_full_ex_len, max_only_context_len, overlap, eq_max_padding, device)
 
     @property
     def _mask_types(self) -> List[Enum]:
-        return self.masker.mask_types()
+        return self.masker.mask_types
 
-    def _read_data(self, path_to_data: str) -> List[Tuple[str, str, List[List[Tuple[MaskNgramType, int, int]]]]]:
+    def _read_data(self, path_to_data: str) -> List[Tuple[str, str, List[List[Tuple[Enum, int, int]]]]]:
         docs = self._read_docs(path_to_data)
-        masked_data, error_to_count = self.randomly_mask_dataset(docs,
-                                                                 random_sample_down_to_max=True,
-                                                                 ensure_valid_bounds_in_spans=True,
-                                                                 ensure_nonoverlapping_spans=True,
-                                                                 ensure_unique=True)
+        masked_data, error_to_count = self.randomly_mask_dataset(docs)
         print(f'There were next errors in random masking dataset:\n{error_to_count}')
         masked_data_with_id = [(str(i), t, m) for i, (t, m) in enumerate(masked_data)]
         return masked_data_with_id
@@ -171,81 +157,24 @@ class RandomMaskTextInfillDataset(TextInfillDataset):
     def _read_docs(self, path_to_data: str) -> List[str]:
         pass
 
-    def randomly_mask_dataset(self, docs, **kwargs) \
-            -> Tuple[List[Tuple[str, List[List[Tuple[MaskNgramType, int, int]]]]], Counter]:
+    def randomly_mask_dataset(self, docs) \
+            -> Tuple[List[Tuple[str, List[List[Tuple[Enum, int, int]]]]], Counter]:
         """
-        :return:  ([(текст документа, список наборов масок для него: [[(тип, сдвиг, длина), ...], ...]), ...], счётчик ошибок при создании масок)
+        :return:  ([(текст документа, список наборов масок для него: [[(тип, сдвиг, длина), ...], ...]), ...],
+                     счётчик ошибок при создании масок)
         """
         docs_masked = []
         error_to_count_total = Counter()
         for doc in tqdm(docs):
-            doc_masks, error_to_count = self.randomly_mask_document(doc, **kwargs)
+            doc_masks, error_to_count = self.masker.mask(doc)
             docs_masked.append((doc, doc_masks))
             for k, v in error_to_count.items():
                 error_to_count_total[k] += v
 
         return docs_masked, error_to_count_total
 
-    def randomly_mask_document(self, doc,
-                               random_sample_down_to_max=True,
-                               ensure_valid_bounds_in_spans=True,
-                               ensure_nonoverlapping_spans=True,
-                               ensure_unique=True) -> Tuple[List[List[Tuple[MaskNgramType, int, int]]], Counter]:
-        """
-        :return: (список наборов масок для одного документа: [[(тип, сдвиг, длина), ...], ...], счётчик ошибок при их создании масок)
-        """
-        error_to_count = Counter()
-        doc_masks = []
-        doc_masks_set = set()
 
-        def mask_acceptable(masked_spans):
-            if self.min_masked_spans_per_ex is not None and len(masked_spans) < self.min_masked_spans_per_ex:
-                return False, 'Too few spans'
-
-            if self.max_masked_spans_per_ex is not None and len(masked_spans) > self.max_masked_spans_per_ex:
-                return False, 'Too many spans'
-
-            if ensure_valid_bounds_in_spans and not masked_spans_bounds_valid(masked_spans, len(doc)):
-                return False, 'Masked span boundaries are invalid'
-
-            if ensure_nonoverlapping_spans and masked_spans_overlap(masked_spans):
-                return False, 'Masked spans overlap'
-
-            if ensure_unique and masked_spans in doc_masks_set:
-                return False, 'Mask is not unique'
-
-            return True, None
-
-        for i in range(self.num_examples_per_doc):
-            mask = None
-            num_retries = 0
-            while num_retries < self.max_num_retries_per_ex and mask is None:
-                try:
-                    mask = tuple(self.masker.mask(doc))
-                except Exception as e:
-                    error_to_count['Mask function exception: {}'.format(str(e))] += 1
-                    mask = None
-
-                if mask is not None:
-                    if (self.max_masked_spans_per_ex is not None and random_sample_down_to_max
-                            and len(mask) > self.max_masked_spans_per_ex):
-                        m_indexes = sorted(random.sample(list(range(len(mask))), self.max_masked_spans_per_ex))
-                        mask = tuple(mask[index] for index in m_indexes)
-                    mask_is_acceptable, error_msg = mask_acceptable(mask)
-                    if not mask_is_acceptable:
-                        error_to_count['Issue with example: {}'.format(error_msg)] += 1
-                        mask = None
-
-                num_retries += 1
-
-            if mask is not None:
-                doc_masks.append(mask)
-                doc_masks_set.add(mask)
-
-        return [list(m) for m in doc_masks], error_to_count
-
-
-class ArxivRandomMaskTextInfillDataset(RandomMaskTextInfillDataset):
+class ArxivMaskedTextInfillDataset(MaskedTextInfillDataset):
     def _read_docs(self, path_to_data: str) -> List[str]:
         attrs = ['title', 'authors', 'categories', 'abstract']
         assert self.split in ['train', 'valid', 'test']
@@ -278,11 +207,9 @@ class ArxivRandomMaskTextInfillDataset(RandomMaskTextInfillDataset):
         return abstracts
 
 
-class StoriesRandomMaskTextInfillDataset(RandomMaskTextInfillDataset):
-    def __init__(self, path_to_data: str, split: str = None, with_titles=True, exclude_nonstandard=True,
-                 max_num_examples=None, is_uncased=False, with_answers=True,
-                 mask_p=None, max_span_len=None, num_examples_per_doc=3,
-                 max_num_retries_per_ex=3, min_masked_spans_per_ex=None, max_masked_spans_per_ex=None,
+class StoriesMaskedTextInfillDataset(MaskedTextInfillDataset):
+    def __init__(self, path_to_data: str, masker: MaskFn, split: str = None,
+                 with_titles=True, exclude_nonstandard=True, max_num_examples=None, is_uncased=False, with_answers=True,
                  pretrained_tokenizer: str = None, max_full_ex_len=1024, max_only_context_len=None, overlap=256,
                  eq_max_padding=True, device="cuda:0", **kwargs):
         """
@@ -293,12 +220,6 @@ class StoriesRandomMaskTextInfillDataset(RandomMaskTextInfillDataset):
         :param max_num_examples: максимальное количество документов
         :param is_uncased: приводить ли все символы к нижнему регистру или нет
         :param with_answers: добавлять ли к замаскированному запросу ответы (false, если в данных нет ответов)
-        :param mask_p: вероятность замаскировать n-грамму, начиная с указанного слова
-        :param max_span_len: максимальная длина замаскированной n-граммы
-        :param num_examples_per_doc: количество различных разметок / маскировок одного документа
-        :param max_num_retries_per_ex: количество попыток корректно замаскировать документ для одной разметки
-        :param min_masked_spans_per_ex: минимальное количество масок в одной разметке документа
-        :param max_masked_spans_per_ex: максимальное количество масок в одной разметке документа
         :param pretrained_tokenizer: путь к сохранённым параметрам токенизатора
         :param max_full_ex_len: максимальное количество токенов в примере
         :param max_only_context_len: максимальное количество токенов для запроса без ответа
@@ -309,8 +230,7 @@ class StoriesRandomMaskTextInfillDataset(RandomMaskTextInfillDataset):
         """
         self.with_titles = with_titles
         self.exclude_nonstandard = exclude_nonstandard
-        super().__init__(path_to_data, split, max_num_examples, is_uncased, with_answers, mask_p, max_span_len,
-                         num_examples_per_doc, max_num_retries_per_ex, min_masked_spans_per_ex, max_masked_spans_per_ex,
+        super().__init__(path_to_data, masker, split, max_num_examples, is_uncased, with_answers,
                          pretrained_tokenizer, max_full_ex_len, max_only_context_len, overlap, eq_max_padding, device)
 
     def _read_docs(self, path_to_data: str) -> List[str]:
@@ -578,12 +498,12 @@ def get_text_infill_dataset(dataset_type, *args, **kwargs) -> TextInfillDataset:
         dataset_type = DatasetType[dataset_type.upper()]
 
     if dataset_type == DatasetType.ARXIV_CS_ABSTRACTS:
-        d = ArxivRandomMaskTextInfillDataset(*args, **kwargs)
+        d = ArxivMaskedTextInfillDataset(*args, **kwargs)
     elif dataset_type == DatasetType.ROC_STORIES:
-        d = StoriesRandomMaskTextInfillDataset(**kwargs)
+        d = StoriesMaskedTextInfillDataset(**kwargs)
     elif dataset_type == DatasetType.ROC_STORIES_NO_TITLE:
         kwargs['with_titles'] = False
-        d = StoriesRandomMaskTextInfillDataset(**kwargs)
+        d = StoriesMaskedTextInfillDataset(**kwargs)
     elif dataset_type == DatasetType.I2B2SIX:
         d = I2b2SixNerDatasetMarkedUpTextInfillDataset(*args, **kwargs)
     elif dataset_type == DatasetType.I2B2FOURTEEN:

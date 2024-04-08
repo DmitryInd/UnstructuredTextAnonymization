@@ -29,12 +29,9 @@ class PersonalEntityMaskFn(MaskFn):
         self.is_markup = is_markup
         self.markup_model = markup_model
 
-    @staticmethod
-    def mask_types() -> List[Enum]:
+    @property
+    def mask_types(self) -> List[Enum]:
         return list(MaskEntityType)
-
-    def mask_type_serialize(self, m_type: Enum) -> str:
-        return m_type.name.lower()
 
     def mask(self, doc, is_markup=None):
         """

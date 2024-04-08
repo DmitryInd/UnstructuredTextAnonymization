@@ -1,0 +1,6 @@
+p: 0.1
+max_ngram_mask_length: 5
+num_examples_per_doc: 1
+max_num_retries_per_ex: 3
+min_masked_spans_per_ex: 1
+max_masked_spans_per_ex: 5

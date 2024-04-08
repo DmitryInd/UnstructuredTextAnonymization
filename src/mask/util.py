@@ -2,13 +2,13 @@ from enum import Enum
 from typing import Optional, Tuple, List, Iterable, Dict
 
 # from mask.base import MaskFn
-# from mask.n_gram import NgramsMaskFn
+# from mask.n_gram import RandomNgramsMaskFn
 # from mask.personal_entity import PersonalEntityMaskFn
 #
 #
 # def get_mask_function(mask_type, *args, **kwargs) -> Optional[MaskFn]:
 #     if mask_type == 'n_gram':
-#         return NgramsMaskFn(*args, **kwargs)
+#         return RandomNgramsMaskFn(*args, **kwargs)
 #     elif mask_type == 'personal_entity':
 #         return PersonalEntityMaskFn(*args, **kwargs)
 #

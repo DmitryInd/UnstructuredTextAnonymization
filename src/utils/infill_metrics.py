@@ -31,23 +31,19 @@ class Statistics:
         self.completed_sentences = self.anonymization(general_category_list,
                                                       specific_category_list,
                                                       source_text_list)
-        self.substitutions = [[self.completed_sentences[i][j] for j, label in enumerate(labels)
-                               if label != self.other_label] for i, labels in enumerate(self.general_category_list)]
         self.error_rates = self._calculate_cer()
         self.ex_cer = np.array(list(map(np.mean, self.error_rates)))
         self.avg_cer = self.ex_cer.mean()
 
     def _calculate_cer(self) -> List[List[float]]:
         cer = []
-        for labels, doc, sub_set in zip(self.general_category_list, self.source_text_list, self.substitutions):
-            cursor = 0
+        # Sub - substituted
+        for labels, doc, sub_doc in zip(self.general_category_list, self.source_text_list, self.completed_sentences):
             doc_cer = []
-            for label, section in zip(labels, doc):
+            for label, section, sub_section in zip(labels, doc, sub_doc):
                 if label != self.other_label:
-                    pred = sub_set[cursor] if cursor < len(sub_set) else ""
-                    doc_cer.append(char_error_rate(pred.lower() if self.is_uncased else pred,
+                    doc_cer.append(char_error_rate(sub_section.lower() if self.is_uncased else sub_section,
                                                    section.lower() if self.is_uncased else section).item())
-                    cursor += 1
             cer.append(doc_cer)
 
         return cer

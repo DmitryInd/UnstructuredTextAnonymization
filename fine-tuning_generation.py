@@ -11,6 +11,7 @@ sys.path.insert(1, "./src")
 from datasets.text_infill_dataset import get_text_infill_dataset
 from models.gpt2_model import PretrainedGPT2TextInfilling
 from utils.log_reader import TensorBoardReader
+from mask.personal_entity import MaskEntityType
 
 if __name__ == '__main__':
     set_seed(42)
@@ -22,8 +23,12 @@ if __name__ == '__main__':
     model_config = yaml.load(open("configs/gpt2_fine-tune_config.yaml", 'r'), Loader=yaml.Loader)
     # Data processing
     train_dataset = get_text_infill_dataset(split="train", path_to_data=train_data_config["train_data_path"],
+                                            label2type=lambda x: MaskEntityType[x.upper()],
+                                            mask_types=list(MaskEntityType),
                                             **train_data_config, device='cpu')
     val_dataset = get_text_infill_dataset(split="validate", path_to_data=validate_data_config["validate_data_path"],
+                                          label2type=lambda x: MaskEntityType[x.upper()],
+                                          mask_types=list(MaskEntityType),
                                           **validate_data_config, device='cpu')
     print(f"Len of train dataset: {len(train_dataset)}\nLen of validation dataset: {len(val_dataset)}")
     train_dataloader = DataLoader(train_dataset, shuffle=True,
@@ -43,11 +48,13 @@ if __name__ == '__main__':
     path_to_checkpoint = model_reader.get_ckpt_path(model_config["model_version"])
     text_infill_model = PretrainedGPT2TextInfilling.load_from_checkpoint(
         path_to_checkpoint,
+        pretrained_name=model_config["pretrained_model_path"],
         total_steps=model_config["epochs"] * len(train_dataloader),
         vocab_size=train_dataset.tokenizer.vocab_size,
         end_infill_id=train_dataset.tokenizer.end_infill_id,
         **model_config
     )
+    text_infill_model.tokenizer = train_dataset.tokenizer
     print(text_infill_model)
     text_infill_checkpoint_callback = ModelCheckpoint(filename='best-{epoch}',
                                                       monitor='val_loss',

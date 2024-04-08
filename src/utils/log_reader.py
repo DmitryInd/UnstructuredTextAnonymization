@@ -71,17 +71,17 @@ class TensorBoardReader:
     def plot_text_infill_tensorboard_graphics(self, version: int = -1):
         subplots = [
             ['val_loss', 'train_loss']
-            # , ['val_cer', 'train_cer']
+            , ['val_cer', 'train_cer']
         ]
         subplots_titles = [
             ("История ошибки", "Ошибка")
-            # , ("История CER", "CER")
+            , ("История CER", "CER")
         ]
         labels = {
             'train_loss': 'Train'
-            #, 'train_cer': 'Train'
+            , 'train_cer': 'Train'
             , 'val_loss': 'Valid'
-            # ,'val_cer': 'Valid'
+            , 'val_cer': 'Valid'
         }
         self.plot_tensorboard_graphics(subplots, subplots_titles, labels, version)
 

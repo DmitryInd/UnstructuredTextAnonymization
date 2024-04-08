@@ -2,7 +2,7 @@ import json
 from enum import Enum
 from functools import lru_cache
 from pathlib import Path
-from typing import List, Tuple, Set
+from typing import List, Tuple, Set, Optional
 
 import numpy as np
 import regex as re
@@ -12,6 +12,7 @@ from tokenizers import decoders
 from tokenizers.models import WordPiece
 from tokenizers.pre_tokenizers import Whitespace
 from tokenizers.trainers import WordPieceTrainer
+from torch import Tensor
 from transformers import BertTokenizer, PreTrainedTokenizer
 
 from mask.util import align_char_mask_to_tokens, apply_masked_spans
@@ -523,3 +524,32 @@ class OfficialGPT2Tokenizer:
     @property
     def vocab_size(self):
         return len(self.encoder)
+
+    def parse_answers(self, prediction: Tensor, target: Optional[Tensor] = None) -> List[str]:
+        """
+        :param prediction: tensor[int] 1 x len - выход модели для одного примера
+        :param target: tensor[int] 1 x len - целевой ответ для одного примера
+                       (опционально, чтобы выравнять количество ответов в предсказанном и целевом результате для CER)
+        :return: список декодированных слов, предсказанных моделью для заполнения пропусков
+        """
+        if target is None:
+            start = prediction.tolist().index(self.start_infill_id)
+        else:
+            start = target.tolist().index(self.start_infill_id)
+
+        answers = prediction[start+1:].tolist()
+        answers_list = []
+        while answers:
+            try:
+                end_answer = answers.index(self.end_infill_id)
+            except ValueError:
+                end_answer = len(answers)
+            answers_list.append(self.decode(answers[:end_answer]))
+            answers = answers[end_answer + 1:]
+
+        if target is not None:
+            mask_n = (target == self.end_infill_id).sum()
+            answers_list = answers_list[:mask_n]
+            answers_list.extend(["" for _ in range(mask_n)])
+
+        return answers_list
