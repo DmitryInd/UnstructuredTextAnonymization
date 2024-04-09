@@ -110,7 +110,7 @@ class Statistics:
             record_id = fault_record_ids[i]
             idx = self.record2idx[record_id]
             _, token_ids, label_ids = self.dataset[idx]
-            pred_ids = self.model(token_ids.unsqueeze(0))[0].argmax(1)
+            pred_ids = self.model(token_ids.to(self.device).unsqueeze(0))[0].argmax(1)
             token_ids, label_ids, pred_ids = token_ids.tolist(), label_ids.tolist(), pred_ids.tolist()
             sentence, true_label_ids = self.tokenizer.decode(token_ids, label_ids)
             _, pred_label_ids = self.tokenizer.decode(token_ids, pred_ids)

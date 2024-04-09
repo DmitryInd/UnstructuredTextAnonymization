@@ -49,19 +49,15 @@ if __name__ == '__main__':
     )
     text_infill_model.tokenizer = train_dataset.tokenizer
     print(text_infill_model)
-    text_infill_checkpoint_callback = ModelCheckpoint(filename='best-{epoch}',
-                                                      monitor='val_loss',
-                                                      mode='min',
-                                                      save_top_k=1)
-    early_stoping_callback = early_stopping.EarlyStopping(monitor="val_loss",
-                                                          patience=5,
-                                                          mode='min')
+    text_infill_checkpoint_callback = ModelCheckpoint(filename='best-{epoch}', monitor='val_loss',
+                                                      mode='min', save_top_k=1)
+    early_stopping_callback = early_stopping.EarlyStopping(monitor="val_loss", patience=5, mode='min')
     trainer_args = {
         "accelerator": "gpu",
         "log_every_n_steps": 1,
         "max_epochs": model_config["epochs"],
         "default_root_dir": model_config["log_dir"],
-        "callbacks": [text_infill_checkpoint_callback, early_stoping_callback]
+        "callbacks": [text_infill_checkpoint_callback, early_stopping_callback]
     }
     trainer = pl.Trainer(**trainer_args, enable_progress_bar=True)
     trainer.fit(text_infill_model, train_dataloader, val_dataloader)
