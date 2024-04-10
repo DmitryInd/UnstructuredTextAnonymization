@@ -15,11 +15,12 @@ from models.gpt2_model import PretrainedGPT2TextInfilling
 from utils.log_reader import TensorBoardReader
 from mask.personal_entity import MaskEntityType
 
+
 if __name__ == '__main__':
     set_seed(42)
     # Config initialisation
     anon_config = yaml.load(open("configs/gpt2_anonymization_config.yaml", 'r'), Loader=yaml.Loader)
-    data_config = yaml.load(open("configs/i2b2-2014_data_config.yaml", 'r'), Loader=yaml.Loader)
+    data_config = yaml.load(open("configs/i2b2-2006_data_config.yaml", 'r'), Loader=yaml.Loader)
     model_config = yaml.load(open("configs/bert-large_model_config.yaml", 'r'), Loader=yaml.Loader)
     # Data processing
     model_reader = TensorBoardReader(Path(anon_config["log_dir"]) / Path("lightning_logs"))
@@ -45,8 +46,7 @@ if __name__ == '__main__':
                                 pin_memory=False,
                                 persistent_workers=True)
     # Pytorch lightning
-    ner_model = PretrainedBertNER(pretrained_name=model_config["pretrained_model_path"],
-                                  encoder_vocab_size=len(train_dataset.tokenizer.index2word),
+    ner_model = PretrainedBertNER(encoder_vocab_size=len(train_dataset.tokenizer.index2word),
                                   num_classes=len(train_dataset.index2label),
                                   total_steps=model_config["epochs"] * len(train_dataloader),
                                   other_index=train_dataset.label2index[train_dataset.other_label],

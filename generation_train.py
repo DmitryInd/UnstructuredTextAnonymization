@@ -41,7 +41,6 @@ if __name__ == '__main__':
                                 persistent_workers=True)
     # Pytorch lightning
     text_infill_model = PretrainedGPT2TextInfilling(
-        pretrained_name=model_config["pretrained_model_path"],
         total_steps=model_config["epochs"] * len(train_dataloader),
         vocab_size=train_dataset.tokenizer.vocab_size,
         end_infill_id=train_dataset.tokenizer.end_infill_id,

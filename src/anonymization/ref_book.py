@@ -20,7 +20,8 @@ class ReferenceBookAnonymization(Anonymization):
                  path_to_organizations: str,
                  path_to_hospitals: str,
                  path_to_professions: str,
-                 other_label: str = 'O'):
+                 other_label: str = 'O',
+                 **kwargs):
         super().__init__(other_label)
         self.professions = self._read_ref_book(path_to_professions)
         self.hospitals = self._read_ref_book(path_to_hospitals)

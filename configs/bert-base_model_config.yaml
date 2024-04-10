@@ -1,4 +1,4 @@
-pretrained_model_path: "bert-base-uncased" # "bert-base-cased" / "bert-base-uncased"
+pretrained_name: "bert-base-uncased" # "bert-base-cased" / "bert-base-uncased"
 lr: 0.0001
 epochs: 20
 adaptation_epochs: 5

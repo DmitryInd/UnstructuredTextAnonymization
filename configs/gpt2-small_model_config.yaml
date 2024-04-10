@@ -1,4 +1,4 @@
-pretrained_model_path: "gpt2"
+pretrained_name: "gpt2"
 lr: 0.0001
 epochs: 50
 train_context: False

@@ -1,4 +1,4 @@
-pretrained_model_path: "bert-large-uncased" # "bert-large-cased" / "bert-large-uncased"
+pretrained_name: "bert-large-uncased" # "bert-large-cased" / "bert-large-uncased"
 lr: 0.0001
 epochs: 20
 adaptation_epochs: 5
