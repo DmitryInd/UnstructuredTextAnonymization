@@ -6,6 +6,7 @@ from tabulate import tabulate
 from torchmetrics.functional.text import char_error_rate
 
 from anonymization.base import Anonymization
+import itertools
 
 
 class Statistics:
@@ -42,8 +43,10 @@ class Statistics:
             doc_cer = []
             for label, section, sub_section in zip(labels, doc, sub_doc):
                 if label != self.other_label:
-                    doc_cer.append(char_error_rate(sub_section.lower() if self.is_uncased else sub_section,
-                                                   section.lower() if self.is_uncased else section).item())
+                    doc_cer.append(
+                        char_error_rate(sub_section.strip().lower() if self.is_uncased else sub_section.strip(),
+                                        section.strip().lower() if self.is_uncased else section.strip()).item()
+                    )
             cer.append(doc_cer)
 
         return cer
@@ -152,3 +155,21 @@ class Statistics:
         cer, labels, source, substituted = self.examples_by_indexes(indexes)
         self._print_examples(cer, labels, source, substituted, indexes,
                              max_example_len=max_example_len, start_other_len=start_other_len)
+
+    def find_closest_substitutions(self, n):
+        """
+        Возвращает индексы n самых близких замен сущностей и их значение Character Error Rate
+        """
+        cer = np.array(list(itertools.chain(*self.error_rates)))
+        indexes = np.argsort(cer)[:n]
+        cer = cer[indexes]
+        row_indexes = np.zeros((len(indexes)), dtype=np.int_)
+        stop = np.ones((len(indexes)), dtype=np.int_)
+        for row in self.error_rates:
+            stop[len(row) > indexes] = 0
+            indexes -= stop * len(row)
+            row_indexes += stop
+            if not any(stop):
+                break
+
+        return (row_indexes, indexes), cer
