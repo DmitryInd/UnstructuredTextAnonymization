@@ -70,27 +70,85 @@ class Statistics:
 
     def _print_examples(self, error_rate: List[List[float]],
                         labels: List[List[str]], source_texts: List[List[str]], substituted: List[List[str]],
-                        indexes=None):
+                        indexes=None, max_example_len=None, start_other_len=None):
+        if max_example_len is not None:
+            start_other_len = start_other_len if start_other_len is not None else max_example_len // 2
+
         for i in range(len(source_texts)):
-            cursor = 0
+            labels_set = []
+            sources_set = []
+            substitutions_set = []
+            error_rates_set = []
+
+            cur_labels = []
+            cur_source = []
+            cur_sub = []
             aligned_error_rate = []
-            for label in labels[i]:
+
+            source_tail = ""
+            sub_tail = ""
+
+            cursor = 0
+            ex_len = 0
+            for j, label in enumerate(labels[i]):
                 if label != self.other_label and cursor < len(error_rate[i]):
-                    aligned_error_rate.append(error_rate[i][cursor])
+                    cur_labels.append(label)
+                    cur_source.append(self._prepare_text(source_texts[i][j]))
+                    cur_sub.append(self._prepare_text(substituted[i][j]))
+                    aligned_error_rate.append(f'{error_rate[i][cursor]:.3f}')
                     cursor += 1
                 else:
-                    aligned_error_rate.append("")
+                    aligned_error_rate.append('')
+                    cur_labels.append(label)
+                    if max_example_len is not None:
+                        # Обрезаем до максимального количества символов
+                        left_len = max_example_len - ex_len
+                        cur_source.append(self._prepare_text(source_texts[i][j][:left_len]))
+                        cur_sub.append(self._prepare_text(substituted[i][j][:left_len]))
+                        if left_len < len(source_texts[i][j]):
+                            # Для следующего примера
+                            tail_start = max(len(source_texts[i]) - left_len, start_other_len)
+                            source_tail = self._prepare_text(source_texts[i][j][-tail_start:])
+                            sub_tail = self._prepare_text(substituted[i][j][-tail_start:])
+                    else:
+                        cur_source.append(self._prepare_text(source_texts[i][j]))
+                        cur_sub.append(self._prepare_text(substituted[i][j]))
+
+                ex_len += len(cur_source[-1])
+                if ex_len >= max_example_len:
+                    labels_set.append(cur_labels)
+                    sources_set.append(cur_source)
+                    substitutions_set.append(cur_sub)
+                    error_rates_set.append(aligned_error_rate)
+
+                    cur_labels = [self.other_label] if source_tail else []
+                    cur_source = [source_tail] if source_tail else []
+                    cur_sub = [sub_tail] if source_tail else []
+                    aligned_error_rate = [''] if source_tail else []
+                    ex_len = len(source_tail)
+
+            if ''.join(aligned_error_rate):
+                labels_set.append(cur_labels)
+                sources_set.append(cur_source)
+                substitutions_set.append(cur_sub)
+                error_rates_set.append(aligned_error_rate)
 
             print('_' * 5 + f' Record {i if indexes is None else indexes[i]} ' + '_' * 5)
-            print(tabulate(
-                [
-                    ['Labels:'] + labels[i],
-                    ['Source text:'] + source_texts[i],
-                    ['Substituted text:'] + substituted[i],
-                    ['CER'] + aligned_error_rate
-                ],
-                tablefmt='orgtbl'))
+            for j in range(len(sources_set)):
+                print(tabulate(
+                    [
+                        ['Labels:'] + labels_set[j],
+                        ['Source text:'] + sources_set[j],
+                        ['Substituted text:'] + substitutions_set[j],
+                        ['CER'] + error_rates_set[j]
+                    ],
+                    tablefmt='orgtbl'))
 
-    def print_examples_by_indexes(self, indexes):
+    @staticmethod
+    def _prepare_text(text: str):
+        return ' '.join(text.split('\n'))
+
+    def print_examples_by_indexes(self, indexes, max_example_len=None, start_other_len=None):
         cer, labels, source, substituted = self.examples_by_indexes(indexes)
-        self._print_examples(cer, labels, source, substituted, indexes)
+        self._print_examples(cer, labels, source, substituted, indexes,
+                             max_example_len=max_example_len, start_other_len=start_other_len)
