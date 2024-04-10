@@ -57,7 +57,7 @@ class NerDataset(Dataset, ABC):
                  label_aliases: List[Tuple[str, List[str]]] = None, other_label='O',
                  is_uncased=False, pretrained_tokenizer: str = None,
                  max_token_number=100, overlap=40, eq_max_padding=True,
-                 cashed_data_path: str = None, device="cuda:0", **kwargs):
+                 cashed_data_path: str = None, device="cpu", **kwargs):
         """
         :param path_to_folder: путь к директории с xml файлами, содержащими размеченные данные /
                                путь к .pkl файлу, в котором данные приведены к нужному формату
