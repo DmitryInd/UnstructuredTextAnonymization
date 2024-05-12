@@ -4,7 +4,7 @@ import torch
 import pytorch_lightning as pl
 from torchmetrics.text import CharErrorRate
 from torch import nn
-from datasets.tokenization import TargetType, OfficialGPT2Tokenizer
+from datasets.text_infill_tokenization import TextInfillTokenizer, TargetType
 from transformers import GPT2LMHeadModel
 
 
@@ -35,7 +35,7 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         self.train_context = train_context
         self.end_infill_id = end_infill_id
         # Metrics for quality evaluation
-        self.tokenizer: Optional[OfficialGPT2Tokenizer] = None
+        self.tokenizer: Optional[TextInfillTokenizer] = None
         self.train_cer = CharErrorRate()
         self.val_cer = CharErrorRate()
 

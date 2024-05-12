@@ -9,7 +9,7 @@ import torch
 from torch.utils.data import Dataset
 
 from anonymization.base import Anonymization
-from datasets.tokenization import WordPieceTokenizer
+from datasets.ner_tokenization import WordPieceNERTokenizer
 
 LABEL_MEMBERSHIP = [
     (
@@ -106,16 +106,18 @@ class NerDataset(Dataset, ABC):
         if anonymization is not None:
             tokenized_source_list = anonymization(general_category_list, specific_category_list, tokenized_source_list)
         # Data tokenization
-        self.tokenizer = WordPieceTokenizer(tokenized_source_list,
-                                            self.label2index[self.pad_label], pad_flag=eq_max_padding,
-                                            max_sent_len=max_token_number, overlap=overlap,
-                                            pretrained_name=pretrained_tokenizer)
+        self.tokenizer = WordPieceNERTokenizer(tokenized_source_list,
+                                               self.label2index[self.pad_label], pad_flag=eq_max_padding,
+                                               max_sent_len=max_token_number, overlap=overlap,
+                                               pretrained_name=pretrained_tokenizer)
+
         self._record_ids, self._tokenized_source_list, self._tokenized_target_list = [], [], []
         for record_id, sentence, labels in zip(record_ids, tokenized_source_list, tokenized_target_list):
-            tokenized = self.tokenizer(sentence, labels)
-            self._record_ids.extend([f"{record_id}:{-i}" for i in range(len(tokenized[0]) - 1, -1, -1)])
-            self._tokenized_source_list.extend(tokenized[0])
-            self._tokenized_target_list.extend(tokenized[1])
+            offsets, token_segments, label_segments = self.tokenizer(sentence, labels)
+            self._record_ids.extend([f"{record_id}:{offset}" for offset in offsets])
+            self._tokenized_source_list.extend(token_segments)
+            self._tokenized_target_list.extend(label_segments)
+
         self.record2idx = {record_id: i for i, record_id in enumerate(self._record_ids)}
         self._record_ids = np.array(self._record_ids)
         self.device = device

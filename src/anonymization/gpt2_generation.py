@@ -2,12 +2,12 @@ from enum import Enum
 from typing import List, Optional
 
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 from anonymization.base import Anonymization
 from datasets.text_infill_dataset import FromListMarkedUpTextInfillDataset, get_ngram_type, MaskNgramType
-from datasets.tokenization import TargetType
+from datasets.text_infill_tokenization import TargetType
 from models.gpt2_model import PretrainedGPT2TextInfilling
-from tqdm import tqdm
 
 
 class GPT2GenerationAnonymization(Anonymization):
@@ -53,7 +53,7 @@ class GPT2GenerationAnonymization(Anonymization):
             record_ids, inputs, tts = batch  # B, L
             outputs = self.model.inference(inputs, tts)
             for record_id, labels, pred in zip(record_ids, tts, outputs):
-                record_id = record_id.split(":", 1)[0]
+                record_id = record_id.split(":")[-1]
                 if record_id != last_record_id:
                     last_record_id = record_id
                     predictions.append([])

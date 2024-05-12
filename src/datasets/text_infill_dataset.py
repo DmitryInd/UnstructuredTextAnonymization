@@ -14,7 +14,7 @@ from torch.utils.data import Dataset
 from tqdm import tqdm
 
 from datasets.ner_dataset import LABEL_MEMBERSHIP
-from datasets.tokenization import OfficialGPT2Tokenizer
+from datasets.text_infill_tokenization import OfficialGPT2TextInfillTokenizer
 from mask.base import MaskFn
 from mask.n_gram import MaskNgramType
 from mask.personal_entity import MaskEntityType
@@ -57,26 +57,31 @@ class TextInfillDataset(Dataset, ABC):
             with open(path_to_data, 'rb') as f:
                 dataset = pickle.load(f)
         # Data tokenization
-        self.tokenizer = OfficialGPT2Tokenizer(pretrained_tokenizer, self._mask_types, max_full_ex_len=max_full_ex_len,
-                                               max_only_context_len=max_only_context_len, overlap=overlap,
-                                               pad_flag=eq_max_padding)
-        self._record_ids, self._tokenized_source_list, self._tokenized_target_list = [], [], []
+        self.tokenizer = OfficialGPT2TextInfillTokenizer(
+            pretrained_tokenizer, self._mask_types,
+            max_full_ex_len=max_full_ex_len, max_only_context_len=max_only_context_len,
+            overlap=overlap, pad_flag=eq_max_padding
+        )
+
         print("Start data tokenization")
+        self._record_ids, self._tokenized_source_list, self._tokenized_target_list = [], [], []
         for record_id, doc, mask_sets in tqdm(dataset):
             if self.is_uncased:
                 doc = doc.lower()
-            tokenized = self.tokenizer(doc, mask_sets, with_answers)
-            if doc and not tokenized[0]:
+            token_segments, label_segments = self.tokenizer(doc, mask_sets, with_answers)
+            if doc and not token_segments:
                 raise ValueError("Tokenization error")
             # For saving order of subsequences
-            self._record_ids.extend([f"{record_id}:{-i}" for i in range(len(tokenized[0]) - 1, -1, -1)])
-            self._tokenized_source_list.extend(tokenized[0])
-            self._tokenized_target_list.extend(tokenized[1])
+            self._record_ids.extend([f"{record_id}:{i}" for i in range(0, len(token_segments))])
+            self._tokenized_source_list.extend(token_segments)
+            self._tokenized_target_list.extend(label_segments)
+
         if self.max_num_examples is not None and self.max_num_examples < len(self._tokenized_source_list):
             example_ids = random.sample(list(range(len(self._tokenized_source_list))), max_num_examples)
             self._record_ids = [self._record_ids[x] for x in example_ids]
             self._tokenized_source_list = [self._tokenized_source_list[x] for x in example_ids]
             self._tokenized_target_list = [self._tokenized_target_list[x] for x in example_ids]
+
         self.record2idx = {record_id: i for i, record_id in enumerate(self._record_ids)}
         self._record_ids = np.array(self._record_ids)
         self.device = device

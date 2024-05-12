@@ -55,7 +55,7 @@ class Statistics:
             -> Tuple[List[List[float]], List[List[str]], List[List[str]], List[List[str]]]:
         source = [self.source_text_list[i] for i in indexes]
         substituted = [self.completed_sentences[i] for i in indexes]
-        labels = [self.specific_category_list[i] for i in indexes]
+        labels = [self.general_category_list[i] for i in indexes]
         cer = [self.error_rates[i] for i in indexes]
         return cer, labels, source, substituted
 

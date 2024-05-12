@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Optional, Tuple, List, Iterable, Dict
+from typing import Tuple, List, Iterable, Dict
 
 # from mask.base import MaskFn
 # from mask.n_gram import RandomNgramsMaskFn
@@ -218,7 +218,7 @@ def tokens_offsets_and_residuals_memorized(x: str, x_tok: Tuple[str, ...]) -> Tu
 def convert_masks_to_segments(doc: str, masks: List[Tuple[Enum, int, int]], other_label: str = 'O') \
         -> Tuple[List[str], List[str]]:
     """
-    Конвертирует документ и набор масок для него в последовательности отрезков и их типов
+    Конвертирует документ и набор масок для него в список отрезков и список типов отрезков
     :param doc: документ в формате строки
     :param masks: набор масок для документа: [(тип, сдвиг, длина), ...]
     :param other_label: метка для обычного текста в формате строки
@@ -243,21 +243,23 @@ def convert_masks_to_segments(doc: str, masks: List[Tuple[Enum, int, int]], othe
 
 
 def convert_masked_docs_to_segments_set(masked_docs: List[Tuple[str, str, List[List[Tuple[Enum, int, int]]]]],
-                                        other_label: str = 'O') -> Tuple[List[List[str]], List[List[str]]]:
+                                        other_label: str = 'O') -> Tuple[List[str], List[List[str]], List[List[str]]]:
     """
-    Конвертирует набор замаскированных документов и набор масок для него в последовательности отрезков и их типов
+    Конвертирует набор замаскированных документов и набор масок для него в списки отрезков и списки типов отрезков
     :param masked_docs: [(индекс документа, текст документа,
                           список наборов масок для него: [[(тип, сдвиг, длина), ...], ...]), ...]
     :param other_label: метка для обычного текста в формате строки
     return: категории сущностей в формате [список категорий отрезков в документе, ...];
             исходный текст в формате [список отрезков в документе, ...]
     """
+    record_id_list = []
     category_lists = []
     source_text_lists = []
-    for _, doc, masks_set in masked_docs:
+    for record_id, doc, masks_set in masked_docs:
         for masks in masks_set:
             category_list, source_text_list = convert_masks_to_segments(doc, masks, other_label)
+            record_id_list.append(record_id)
             category_lists.append(category_list)
             source_text_lists.append(source_text_list)
 
-    return category_lists, source_text_lists
+    return record_id_list, category_lists, source_text_lists
