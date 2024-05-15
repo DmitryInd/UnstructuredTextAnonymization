@@ -175,14 +175,18 @@ class NerDataset(Dataset, ABC):
         label_pad_id = self.label2index[self.pad_label]
 
         def collate_fn(sample_list):
-            max_len = max(map(len, list(zip(*sample_list))[1]))
-            record_ids, batch_token_ids, batch_label_ids = [], [], []
-            for record_id, token_ids, label_ids in sample_list:
-                record_ids.append(np.expand_dims(record_id, 0))
-                filler = torch.ones(max_len - len(token_ids), dtype=torch.long, device=self.device)
-                batch_token_ids.append(torch.cat((token_ids, filler * token_pad_id)).unsqueeze(0))
-                batch_label_ids.append(torch.cat((label_ids, filler * label_pad_id)).unsqueeze(0))
-            return np.concatenate(record_ids), torch.cat(batch_token_ids), torch.cat(batch_label_ids)
+            # sample_list: [(record_id, token_input, label_input), ...]
+            record_ids, token_inputs, label_inputs = zip(*sample_list)
+            max_len = max(map(len, token_inputs))
+            record_ids = [np.expand_dims(record_id, 0) for record_id in record_ids]
+            batch_token_ids = torch.full((len(token_inputs), max_len), token_pad_id,
+                                         dtype=torch.long, device=self.device)
+            batch_label_ids = torch.full((len(label_inputs), max_len), label_pad_id,
+                                         dtype=torch.long, device=self.device)
+            for i, (token_input, markup) in enumerate(zip(token_inputs, label_inputs)):
+                batch_token_ids[i, :len(token_input)] = token_input
+                batch_label_ids[i, :len(markup)] = markup
+            return np.concatenate(record_ids), batch_token_ids, batch_label_ids
 
         return collate_fn
 

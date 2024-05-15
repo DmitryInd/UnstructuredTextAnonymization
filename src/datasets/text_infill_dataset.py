@@ -116,7 +116,7 @@ class TextInfillDataset(Dataset, ABC):
         def collate_fn(sample_list):
             # sample_list: [(record_id, token_inputs, label_inputs), ...]
             record_ids, batch_token_ids, batch_label_ids = zip(*sample_list)
-            batch_token_ids, batch_label_ids = self.tokenizer.align_inputs(sample_list[1], sample_list[2])
+            batch_token_ids, batch_label_ids = self.tokenizer.align_inputs(batch_token_ids, batch_label_ids)
             return np.vstack(tuple(record_ids)), batch_token_ids, batch_label_ids
 
         return collate_fn

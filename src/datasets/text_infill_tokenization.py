@@ -3,7 +3,7 @@ from abc import ABC, abstractmethod
 from enum import Enum
 from functools import lru_cache
 from pathlib import Path
-from typing import List, Tuple, Set, Optional
+from typing import List, Tuple, Set, Optional, Dict, Iterable
 
 import numpy as np
 import regex as re
@@ -23,12 +23,6 @@ class TargetType(Enum):
 
 
 class TextInfillTokenizer(ABC):
-    """
-    В коде статьи, как я понял, используется оригинальный код bpe токенизатора для GPT2 модели
-    вместо реализации из библиотеки transformers. Когда появится свободное время,
-    я заменю текущее решение на класс из указанной библиотеки.
-    """
-
     def __init__(self, pretrained_path, mask_types: List[Enum], errors='replace',
                  max_full_ex_len: int = None, max_only_context_len: int = None, overlap: int = None,
                  pad_flag: bool = True):
@@ -43,11 +37,12 @@ class TextInfillTokenizer(ABC):
         """
         self._load(pretrained_path, errors)
         # Add to tokenizer vocabulary technical characters
-        self.pad_id = None
-        self.start_infill_id = None
-        self.end_infill_id = None
-        self.mask_type_to_id = None
+        self.pad_id: Optional[int] = None
+        self.start_infill_id: Optional[int] = None
+        self.end_infill_id: Optional[int] = None
+        self.mask_type_to_id: Optional[Dict[Enum, int]] = None
         self._add_special_characters(mask_types)
+        self.id_to_mask_type = {v: k for k, v in self.mask_type_to_id.items()}
         # Parameters for splitting text
         self.max_full_ex_len = max_full_ex_len  # 1024
         self.max_only_context_len = max_only_context_len  # 3/4 * max_full_ex_len
@@ -74,9 +69,11 @@ class TextInfillTokenizer(ABC):
         :return: массив токенов запросов для модели, массив разметки запросов для CrossEntropy
         """
         full_len = max(map(len, token_inputs))
-        new_token_inputs = torch.full((len(token_inputs), full_len), self.pad_id, dtype=token_inputs[0].dtype)
-        new_markups = torch.full((len(token_inputs), full_len), TargetType.PAD.value, dtype=markups[0].dtype)
-        for i, token_input, markup in enumerate(zip(token_inputs, markups)):
+        new_token_inputs = torch.full((len(token_inputs), full_len), self.pad_id,
+                                      dtype=token_inputs[0].dtype, device=token_inputs[0].device)
+        new_markups = torch.full((len(token_inputs), full_len), TargetType.PAD.value,
+                                 dtype=markups[0].dtype, device=markups[0].device)
+        for i, (token_input, markup) in enumerate(zip(token_inputs, markups)):
             new_token_inputs[i, :len(token_input)] = token_input
             new_markups[i, :len(markup)] = markup
 
@@ -107,9 +104,36 @@ class TextInfillTokenizer(ABC):
         if target is not None:
             mask_n = (target == self.end_infill_id).sum()
             answers_list = answers_list[:mask_n]
-            answers_list.extend(["" for _ in range(mask_n)])
+            answers_list.extend(["" for _ in range(mask_n - len(answers_list))])
 
         return answers_list
+
+    def mark_up_types(self, tokenized_input: torch.Tensor,
+                      target_types_list: Optional[Iterable[int]] = None) -> torch.Tensor:
+        """
+        :param tokenized_input: тензор токенов B x L (Batch, Length)
+        :param target_types_list: последовательный список типов всех пропусков (слева-направо, сверху-вниз);
+                                  если не передан определяется автоматически
+        :return: тензор типов B x L
+        """
+        assert tokenized_input.dim() == 2, "Input must have 2 dimensions: B, L"
+        if target_types_list is None:
+            selector = torch.zeros_like(tokenized_input, dtype=torch.bool)
+            for mask_type_id in self.mask_type_to_id.values():
+                selector |= (tokenized_input == mask_type_id)
+            target_types_list = tokenized_input[selector]
+
+        target_types_list = target_types_list.__iter__()
+        target_types = torch.full_like(tokenized_input, -1)
+        row, left = -1, -1
+        infill_borders = (tokenized_input == self.start_infill_id) | (tokenized_input == self.end_infill_id)
+        infill_borders = zip(*map(lambda x: x.tolist(), torch.where(infill_borders)))
+        for sample_id, pos in infill_borders:
+            if sample_id != row:
+                left = -1
+            if left != -1:
+                target_types[sample_id, left + 1:pos] = self.id_to_mask_type[target_types_list.__next__()].value
+            left = pos
 
     @abstractmethod
     def encode(self, text) -> List[int]:

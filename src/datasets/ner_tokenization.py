@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import List, Tuple, Dict, Union
 
 import numpy as np
+import torch
 from tokenizers import Tokenizer
 from tokenizers import decoders
 from tokenizers.models import WordPiece
@@ -56,7 +57,7 @@ class NERTokenizer(ABC):
         token_id_list, label_id_list = [], []
         padding = self.pad_flag if force_align is None else force_align
         for sentence_part, label in zip(sentence_parts, labels):
-            id_list = self._simple_encode(sentence_part)
+            id_list = self.simple_encode(sentence_part)
             token_id_list.extend(id_list)
             label_id_list.extend([label] * len(id_list))
         # Segmenting sentence
@@ -196,6 +197,9 @@ class NERTokenizer(ABC):
 class WordPieceNERTokenizer(NERTokenizer):
     def __init__(self, sentence_list: List[List[str]], pad_id: int, pad_flag: bool, max_sent_len: int = None,
                  overlap=40, pretrained_name: str = None):
+        self.hard_max: bool = False
+        """Флаг для обработки вероятностей меток, как hard max вероятности"""
+
         self._tokenizer = None
         super().__init__(sentence_list, pad_id, pad_flag, max_sent_len, overlap, pretrained_name)
 
@@ -233,8 +237,8 @@ class WordPieceNERTokenizer(NERTokenizer):
                     # If there is only labels, their frequencies are just used
                     probs = np.eye(max_label_id + 1, dtype=np.float64)[label]
                 elif isinstance(label, np.ndarray) and len(label.shape) == 1:
-                    # If there is probabilities of the labels, a beam search on log probabilities is used
-                    probs = np.log(label)
+                    # If there is soft probabilities of the labels, a beam search on log probabilities is used
+                    probs = np.log(label) if not self.hard_max else label
                 else:
                     raise ValueError(f'The type of the followed label  is not supported:\n{label}')
                 possible_labels += probs
