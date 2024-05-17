@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import List, Tuple, Dict, Union
+from typing import List, Tuple, Dict, Union, Optional
 
 import numpy as np
 import torch
@@ -135,6 +135,36 @@ class NERTokenizer(ABC):
 
         return self.decode(global_text, global_labels / global_counter)
 
+    def parse_labels_from_marked_up_log_probs(self, log_probs: torch.Tensor, mark_up: torch.Tensor,
+                                              labels_number: Optional[List[int]] = None) -> List[int]:
+        """
+        Возвращает развёрнутый список предсказанных меток для размеченного тензора логарифмов вероятностей меток
+        (разметка определяет границы заложенных последовательностей, для каждой из которых предсказывается одна метка;
+         pad_id для не исследуемых позиций)
+
+        log_probs / mark_up: B x L x C
+        labels_number: целевое количество последовательностей в каждом примере (для паддинга)
+        """
+        real_types_list = []
+        num = 0
+        for i, marks in enumerate(mark_up):
+            if labels_number is not None and i > 0:
+                if labels_number[i - 1] >= num:
+                    real_types_list.extend([self.pad_id] * (labels_number[i - 1] - num))
+                else:
+                    real_types_list = real_types_list[:labels_number[i - 1] - num]
+
+            num = 0
+            log_prob = None
+            for j, mark in enumerate(marks):
+                if mark != self.pad_id:
+                    log_prob = log_prob + log_probs[i, j] if log_prob is not None else log_probs[i, j]
+                elif mark == -1 and log_prob is not None:
+                    real_types_list.append(torch.argmax(log_prob).item())
+                    num += 1
+                    log_prob = None
+        return real_types_list
+
     @abstractmethod
     def simple_encode(self, text: str) -> List[int]:
         """
@@ -256,7 +286,7 @@ class WordPieceNERTokenizer(NERTokenizer):
         return predicted_tokens, predicted_labels
 
     def get_vocab(self):
-        self._tokenizer.get_vocab()
+        return self._tokenizer.get_vocab()
 
     def _train(self, sentence_list: List[List[str]], path_to_pretrained: str = None):
         # Pretrained flag

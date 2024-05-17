@@ -79,32 +79,34 @@ class TextInfillTokenizer(ABC):
 
         return new_token_inputs, new_markups
 
-    def parse_answers(self, prediction: Tensor, target: Optional[Tensor] = None) -> List[str]:
+    def parse_answers(self, prediction: Tensor, answers_start=-1, masks_number=-1, till_the_end=False) -> List[str]:
         """
         :param prediction: tensor[int] 1 x len - выход модели для одного примера
-        :param target: tensor[int] 1 x len - целевой ответ для одного примера
-                       (опционально, чтобы выравнять количество ответов в предсказанном и целевом результате для CER)
+        :param answers_start: номер токена, с которого начинается генерация ответов
+        :param masks_number: целевое количество заполняемых пропусков
+        :param till_the_end: обрабатывать ли текст после последнего end_infill токена,
+                             если остались необработанные токены (обычно они это pad токены)
         :return: список декодированных слов, предсказанных моделью для заполнения пропусков
         """
-        if target is None:
-            start = prediction.tolist().index(self.start_infill_id)
-        else:
-            start = target.tolist().index(self.start_infill_id)
+        if answers_start < 0:
+            answers_start = torch.nonzero(prediction == self.start_infill_id)[0, 0].item()
 
-        answers = prediction[start + 1:].tolist()
+        answers = prediction[answers_start + 1:].tolist()
         answers_list = []
         while answers:
             try:
                 end_answer = answers.index(self.end_infill_id)
             except ValueError:
-                end_answer = len(answers)
+                if till_the_end:
+                    end_answer = len(answers)
+                else:
+                    break
             answers_list.append(self.decode(answers[:end_answer]))
             answers = answers[end_answer + 1:]
 
-        if target is not None:
-            mask_n = (target == self.end_infill_id).sum()
-            answers_list = answers_list[:mask_n]
-            answers_list.extend(["" for _ in range(mask_n - len(answers_list))])
+        if masks_number > 0:
+            answers_list = answers_list[:masks_number]
+            answers_list.extend(["" for _ in range(masks_number - len(answers_list))])
 
         return answers_list
 
@@ -125,15 +127,18 @@ class TextInfillTokenizer(ABC):
 
         target_types_list = target_types_list.__iter__()
         target_types = torch.full_like(tokenized_input, -1)
-        row, left = -1, -1
         infill_borders = (tokenized_input == self.start_infill_id) | (tokenized_input == self.end_infill_id)
-        infill_borders = zip(*map(lambda x: x.tolist(), torch.where(infill_borders)))
+        infill_borders = torch.nonzero(infill_borders).tolist()
+        prev_row, left = 0, -1
         for sample_id, pos in infill_borders:
-            if sample_id != row:
+            if sample_id != prev_row:
                 left = -1
+                prev_row = sample_id
             if left != -1:
                 target_types[sample_id, left + 1:pos] = self.id_to_mask_type[target_types_list.__next__()].value
             left = pos
+
+        return target_types
 
     @abstractmethod
     def encode(self, text) -> List[int]:
@@ -185,11 +190,11 @@ class TextInfillTokenizer(ABC):
                 segment = self.encode(segment)  # Convert text to tokens
                 if category:
                     # Such an over complication has occurred historically, but now we can verify the results
-                    j += 1
                     mask_type = char_masks[i][j][0]
                     assert category == mask_type.name, "The mask category does not match the mask type"
+                    j += 1
 
-                    context.append(self.mask_type_to_id(mask_type))
+                    context.append(self.mask_type_to_id[mask_type])
                     answers.append((mask_type, segment))
                 else:
                     context += segment

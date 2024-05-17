@@ -28,6 +28,7 @@ class PretrainedBertNER(pl.LightningModule):
             nn.ReLU(),
             nn.Linear(self.model.config.hidden_size//2, num_classes)
         )
+        self.num_classes = num_classes
         self.other_index = other_index
         self.pad_index = pad_index
         # Expanding or reducing the space of the encoder embeddings

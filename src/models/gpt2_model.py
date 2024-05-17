@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Optional, List, Tuple
 
 import pytorch_lightning as pl
@@ -17,20 +18,29 @@ from models.bert_model import PretrainedBertNER
 class PretrainedGPT2TextInfilling(pl.LightningModule):
     def __init__(self, pretrained_name: str, vocab_size: int, train_context: float,
                  lr: float, total_steps: int, adaptation_part: int, div_factor: int,
-                 end_infill_id=None, **kwargs):
+                 end_infill_id=None, target_types_pred=0.0, real_types_match=0.0, num_classes=1, **kwargs):
         """
         :param pretrained_name: название предобученной GPT2 модели из hugging face hub
         :param vocab_size: итоговый размер словаря (с добавлением или удалением части токенов)
-        :param train_context: коэффициент, с которым учитывается лосс по контексту (0. - отключение)
+        :param train_context: вес функции потерь на контексте (0. - отключение)
         :param lr: максимальный learning rate
         :param total_steps: полное количество шагов обучения: ~ кол-во эпох * размер батча
         :param adaptation_part: доля эпох для обновления весов с низким learning rate
         :param div_factor: максимальный делитель, на который уменьшается learning rate в OneCycle подходе
+        :param end_infill_id: id end_infill токена для инференса модели
+        :param target_types_pred: вес функции потерь для предсказания целевых меток для сгенерированных данных
+        :param real_types_match: вес функции потерь для предсказания истинных меток для сгенерированных данных
+        :param num_classes: количество типов замаскированных данных, генерируемых моделью (num_classes > max_type_id)
         """
         super().__init__()
         self.save_hyperparameters()
         self.model = GPT2LMHeadModel.from_pretrained(pretrained_name)
-        self.type_head = None  # For labels prediction
+        self.type_head = Sequential(
+            Linear(self.model.lm_head.in_features, self.model.lm_head.in_features // 2),
+            LeakyReLU(),
+            Linear(self.model.lm_head.in_features // 2, num_classes),
+        )
+        self.end_infill_id = end_infill_id
         # Expanding or reducing the space of the encoder embeddings
         self.model.resize_token_embeddings(vocab_size)
         # Parameters of optimization
@@ -40,22 +50,14 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         self.total_steps = total_steps
         self.adaptation_part = adaptation_part
         self.train_context = train_context
-        # TODO главное обновление
-        target_types_pred, real_types_match = .5, .5
-        num_classes = 7  # количество классов генерируемых заполнений
-        if target_types_pred or real_types_match:
-            self.type_head = Sequential(
-                Linear(self.model.lm_head.in_features, self.model.lm_head.in_features // 2),
-                LeakyReLU(),
-                Linear(self.model.lm_head.in_features // 2, num_classes),
-            )
-        self.target_types_pred = target_types_pred  # коэффициент, с которым учитывается лосс по предсказанию целевых меток для сгенированных данных
-        self.real_types_match = real_types_match  # коэффициент, с которым учитывается лосс по предсказанию итсинных меток для сгенерированных данных
-        self.ner_model: Optional[PretrainedBertNER] = None  # id меток для модели
-        self.ner_tokenizer: Optional[NERTokenizer] = None
-        self.end_infill_id = end_infill_id
-        # Metrics for quality evaluation
+        self.target_types_pred = target_types_pred
+        self.real_types_match = real_types_match
+        # Additional modules for training
         self.tokenizer: Optional[TextInfillTokenizer] = None
+        self.ner_model: Optional[PretrainedBertNER] = None
+        self.ner_tokenizer: Optional[NERTokenizer] = None
+        """Токенизатор для NER модели со следующими параметрами: pad_id=-1, overlap=0"""
+        # Metrics for quality evaluation
         self.train_cer = CharErrorRate()
         self.val_cer = CharErrorRate()
         self.train_target_type_recall = Recall(task="multiclass", num_classes=num_classes, ignore_index=-1)
@@ -102,7 +104,9 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         logits, types_logits = self.forward(inputs[:, :-1], gen_types=bool(self.target_types_pred or
                                                                            self.real_types_match))
         logits = logits.transpose(2, 1)  # B, L, C -> B, C, L
+        types_logits = types_logits.transpose(2, 1)  # B, L, C -> B, C, L
         hard_pred = torch.argmax(logits, dim=-2)
+        hard_types = torch.argmax(types_logits, dim=-2)
         loss_infill = self.criterion(logits, target_infill[:, 1:])
         loss = loss_infill
         if self.train_context:
@@ -110,26 +114,34 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
             loss += self.train_context * loss_context
         # Compute target labels loss
         if self.target_types_pred and self.tokenizer is not None:
-            target_types_list = inputs[tts == TargetType.CONTEXT_SPECIAL.value]
+            target_types_list = inputs[tts == TargetType.CONTEXT_SPECIAL.value].tolist()
             target_types = self.tokenizer.mark_up_types(inputs, target_types_list)[:, :-1]
             loss += self.target_types_pred * self.criterion(types_logits, target_types)
-            target_type_recall.update(torch.argmax(types_logits, dim=-2), target_types)
+            target_type_recall.update(hard_types, target_types)
         # Compute real labels loss
         if (self.real_types_match and self.tokenizer is not None
                 and self.ner_model is not None and self.ner_tokenizer is not None):
-            sample_answers = [self.tokenizer.parse_answers(gen) for gen in hard_pred]
-            pseudo_labels = [[1] * len(answers) for answers in sample_answers]
+            assert self.ner_tokenizer.pad_id == -1, "Pad id for NER tokenizer must be -1"
+            assert self.ner_tokenizer.overlap == 0, "Overlap of NER tokenizer must be 0"
+            answers_starts = torch.nonzero(inputs == self.tokenizer.start_infill_id).tolist()
+            sample_answers = [self.tokenizer.parse_answers(gen, st[0]) for st, gen in zip(answers_starts, hard_pred)]
+            num_answers = [len(answers) for answers in sample_answers]
+            pseudo_labels = [[1] * num for num in num_answers]
             ner_input, ner_labels = self._prepare_input_for_ner(sample_answers, pseudo_labels)
-            log_probs = log_softmax(self.ner_model(ner_input), dim=-1)
-            real_types_list = self._parse_ner_pred_for_answers(log_probs, ner_labels)
-            real_types = self.tokenizer.mark_up_types(inputs, real_types_list)[:, :-1]
+            with torch.no_grad():
+                log_probs = log_softmax(self.ner_model(ner_input), dim=-1)
+            real_types_list = self.ner_tokenizer.parse_labels_from_marked_up_log_probs(log_probs, ner_labels,
+                                                                                       num_answers)
+            real_types = self.tokenizer.mark_up_types(hard_pred, real_types_list)[:, :-1]
             loss += self.real_types_match * self.criterion(types_logits, real_types)
-            real_type_recall.update(torch.argmax(types_logits, dim=-2), real_types)
+            real_type_recall.update(hard_types, real_types)
         # Compute cer statistics
         if self.tokenizer is not None:
-            for orig, gen in zip(inputs, hard_pred):
-                cer.update(self.tokenizer.parse_answers(gen, orig),
-                           self.tokenizer.parse_answers(orig))
+            answers_starts = torch.nonzero(inputs == self.tokenizer.start_infill_id).tolist()
+            answers_numbers = (inputs == self.tokenizer.end_infill_id).sum(dim=-1).tolist()
+            for answers_start, answers_number, orig, gen in zip(answers_starts, answers_numbers, inputs, hard_pred):
+                cer.update(self.tokenizer.parse_answers(gen, answers_start[0], answers_number),
+                           self.tokenizer.parse_answers(orig, answers_start[0]))
         return loss
 
     def training_step(self, batch, batch_idx):
@@ -220,24 +232,21 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         token_pad_id = self.ner_tokenizer.word2index[self.ner_tokenizer.pad_token]
         batch_token_ids = torch.full((len(tokenized_answers), max_len), token_pad_id,
                                      dtype=torch.long, device=self.device)
-        batch_label_ids = torch.full((len(labels_sets), max_len), -1,
+        batch_label_ids = torch.full((len(labels_sets), max_len), self.ner_tokenizer.pad_id,
                                      dtype=torch.long, device=self.device)
         for i, (token_input, labels) in enumerate(zip(tokenized_answers, labels_sets)):
-            batch_token_ids[i, :len(token_input)] = token_input
-            batch_label_ids[i, :len(labels_sets)] = labels
+            batch_token_ids[i, :len(token_input)] = torch.tensor(token_input)
+            batch_label_ids[i, :len(labels)] = torch.tensor(labels)
 
         return batch_token_ids, batch_label_ids
 
-    @staticmethod
-    def _parse_ner_pred_for_answers(log_probs: torch.Tensor, ner_labels: torch.Tensor) -> List[int]:
-        """Возвращает развёрнутый список предсказанных типов для ответов"""
-        real_types_list = []
-        for i, labels in enumerate(ner_labels):
-            log_prob = None
-            for j, label in enumerate(labels):
-                if label != -1:
-                    log_prob = log_prob + log_probs[i, j] if log_prob is not None else log_probs[i, j]
-                elif label == -1 and log_prob is not None:
-                    real_types_list.append(torch.argmax(log_prob).item())
-                    log_prob = None
-        return real_types_list
+    def update_checkpoint(self, path_to_checkpoint: str, new_name: str = None):
+        checkpoint = torch.load(path_to_checkpoint)
+        old_model_state = checkpoint['state_dict']
+        new_model_state = self.state_dict()
+        for k, v in new_model_state.items():
+            if k in old_model_state:
+                new_model_state[k] = v
+        self.load_from_checkpoint()
+        torch.save(new_model_state, Path(path_to_checkpoint).with_name(new_name + '.ckpt'))
+

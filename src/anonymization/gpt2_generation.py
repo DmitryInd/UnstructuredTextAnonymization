@@ -1,6 +1,7 @@
 from enum import Enum
 from typing import List, Optional
 
+import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
@@ -52,14 +53,13 @@ class GPT2GenerationAnonymization(Anonymization):
         for batch in tqdm(dataloader):
             record_ids, inputs, tts = batch  # B, L
             outputs = self.model.inference(inputs, tts)
-            for record_id, labels, pred in zip(record_ids, tts, outputs):
+            answers_starts = torch.nonzero(inputs == self.tokenizer.start_infill_id).tolist()
+            masks_numbers = (tts == TargetType.CONTEXT_SPECIAL.value).sum(dim=-1).tolist()
+            for record_id, answers_start, masks_number, pred in zip(record_ids, answers_starts, masks_numbers, outputs):
                 record_id = record_id.split(":")[-1]
                 if record_id != last_record_id:
                     last_record_id = record_id
                     predictions.append([])
-                masks_number = (labels == TargetType.CONTEXT_SPECIAL.value).sum().item()
-                answers = dataset.tokenizer.parse_answers(pred)
-                for i in range(masks_number):
-                    answer = answers[i] if i < len(answers) else ""
-                    predictions[-1].append(answer)
+                answers = dataset.tokenizer.parse_answers(pred, answers_start[0], masks_number)
+                predictions[-1].extend(answers)
         return predictions

@@ -2,16 +2,21 @@ import sys
 from pathlib import Path
 
 import pytorch_lightning as pl
+import torch
 import yaml
 from pytorch_lightning.callbacks import ModelCheckpoint, early_stopping
 from torch.utils.data import DataLoader
 from transformers import set_seed
 
+from datasets.ner_tokenization import WordPieceNERTokenizer
+
 sys.path.insert(1, "./src")
 from datasets.text_infill_dataset import get_text_infill_dataset
 from models.gpt2_model import PretrainedGPT2TextInfilling
+from models.bert_model import PretrainedBertNER
 from utils.log_reader import TensorBoardReader
 from mask.personal_entity import MaskEntityType
+
 
 if __name__ == '__main__':
     set_seed(42)
@@ -21,6 +26,7 @@ if __name__ == '__main__':
     validate_data_config = yaml.load(open("configs/i2b2-2014_data_config.yaml", 'r'), Loader=yaml.Loader)
     validate_data_config["pretrained_tokenizer"] = "data/tokenizer/official_gpt2_encoder"
     model_config = yaml.load(open("configs/gpt2_fine-tune_config.yaml", 'r'), Loader=yaml.Loader)
+    ner_model_config = yaml.load(open("configs/bert-large_model_config.yaml", 'r'), Loader=yaml.Loader)
     # Data processing
     train_dataset = get_text_infill_dataset(split="train", path_to_data=train_data_config["train_data_path"],
                                             label2type=lambda x: MaskEntityType[x.upper()],
@@ -44,16 +50,25 @@ if __name__ == '__main__':
                                 pin_memory=False,
                                 persistent_workers=True)
     # Pytorch lightning
+    ner_reader = TensorBoardReader(Path(ner_model_config["log_dir"]) / Path("lightning_logs"))
+    ner_model = PretrainedBertNER.load_from_checkpoint(ner_reader.get_ckpt_path(model_config["ner_model_version"]))
     model_reader = TensorBoardReader(Path(model_config["log_dir"]) / Path("lightning_logs"))
     path_to_checkpoint = model_reader.get_ckpt_path(model_config["model_version"])
     text_infill_model = PretrainedGPT2TextInfilling.load_from_checkpoint(
         path_to_checkpoint,
+        strict=False,
         total_steps=model_config["epochs"] * len(train_dataloader),
-        vocab_size=train_dataset.tokenizer.vocab_size,
-        end_infill_id=train_dataset.tokenizer.end_infill_id,
+        num_classes=ner_model.num_classes,
         **model_config
     )
+    # Set additional parameters
     text_infill_model.tokenizer = train_dataset.tokenizer
+    text_infill_model.ner_model = ner_model
+    text_infill_model.ner_tokenizer = WordPieceNERTokenizer([[]], -1,
+                                                            pad_flag=True,
+                                                            max_sent_len=ner_model_config["max_token_number"],
+                                                            overlap=0,
+                                                            pretrained_name=ner_model_config["pretrained_tokenizer"])
     print(text_infill_model)
     text_infill_checkpoint_callback = ModelCheckpoint(filename='best-{epoch}', monitor='val_loss',
                                                       mode='min', save_top_k=1)

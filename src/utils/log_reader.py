@@ -16,7 +16,7 @@ class TensorBoardReader:
         log_dirs = sorted([(self._get_version(p), p) for p in self.root_path.iterdir() if p.is_dir()])
         self.last_log_path = log_dirs[-1][1].__str__()
         self.version_paths = {version: str(path_to_dir) for version, path_to_dir in log_dirs}
-        self.last_ckpt_path = self._get_ckpt_path(self.last_log_path)
+        # self.last_ckpt_path = self._get_ckpt_path(self.last_log_path)
 
     @staticmethod
     def _get_version(path: Path):
