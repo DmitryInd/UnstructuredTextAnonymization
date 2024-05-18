@@ -146,14 +146,7 @@ class NERTokenizer(ABC):
         labels_number: целевое количество последовательностей в каждом примере (для паддинга)
         """
         real_types_list = []
-        num = 0
         for i, marks in enumerate(mark_up):
-            if labels_number is not None and i > 0:
-                if labels_number[i - 1] >= num:
-                    real_types_list.extend([self.pad_id] * (labels_number[i - 1] - num))
-                else:
-                    real_types_list = real_types_list[:labels_number[i - 1] - num]
-
             num = 0
             log_prob = None
             for j, mark in enumerate(marks):
@@ -161,8 +154,12 @@ class NERTokenizer(ABC):
                     log_prob = log_prob + log_probs[i, j] if log_prob is not None else log_probs[i, j]
                 elif mark == self.pad_id and log_prob is not None:
                     real_types_list.append(torch.argmax(log_prob).item())
-                    num += 1
                     log_prob = None
+                    num += 1
+                    if num >= labels_number[i]:
+                        break
+            if labels_number is not None and labels_number[i] > num:
+                real_types_list.extend([self.pad_id] * (labels_number[i] - num))
         return real_types_list
 
     @abstractmethod

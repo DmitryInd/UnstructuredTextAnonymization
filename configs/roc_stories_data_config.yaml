@@ -7,5 +7,4 @@ max_num_valid_examples: 5000 # 3000
 pretrained_tokenizer: "data/tokenizer/official_gpt2_encoder"
 max_full_ex_len: 128
 overlap: 16
-
 batch_size: 32

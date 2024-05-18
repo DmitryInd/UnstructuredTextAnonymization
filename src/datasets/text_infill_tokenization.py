@@ -133,15 +133,17 @@ class TextInfillTokenizer(ABC):
         prev_row, left = 0, -1
         for sample_id, pos in infill_borders:
             if sample_id != prev_row:
-                left = -1
+                assert tokenized_input[sample_id, pos] == self.start_infill_id, \
+                    "The end infill token is before the start infill token"
                 prev_row = sample_id
-            if left != -1:
+                left = pos
+            elif tokenized_input[sample_id, pos] != self.start_infill_id:
                 try:
                     target_type = self.id_to_mask_type[target_types_list.__next__()].value
                 except KeyError:
                     target_type = np.random.choice(list(self.mask_type_to_id.keys())).value
                 target_types[sample_id, left + 1:pos] = target_type
-            left = pos
+                left = pos
 
         return target_types
 

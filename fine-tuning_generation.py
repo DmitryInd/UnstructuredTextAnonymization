@@ -38,13 +38,13 @@ if __name__ == '__main__':
                                           **validate_data_config, device='cpu')
     print(f"Len of train dataset: {len(train_dataset)}\nLen of validation dataset: {len(val_dataset)}")
     train_dataloader = DataLoader(train_dataset, shuffle=True,
-                                  batch_size=train_data_config["batch_size"],
+                                  batch_size=model_config["batch_size"],
                                   collate_fn=train_dataset.get_collate_fn(),
                                   num_workers=10,
                                   pin_memory=False,
                                   persistent_workers=True)
     val_dataloader = DataLoader(val_dataset, shuffle=False,
-                                batch_size=validate_data_config["batch_size"],
+                                batch_size=model_config["batch_size"],
                                 collate_fn=val_dataset.get_collate_fn(),
                                 num_workers=10,
                                 pin_memory=False,

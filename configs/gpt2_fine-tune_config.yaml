@@ -1,4 +1,4 @@
-pretrained_name: "gpt2"
+pretrained_name: &global_name "gpt2"
 lr: 0.0001
 epochs: 50
 train_context: 0.
@@ -9,3 +9,8 @@ div_factor: 10000
 log_dir: "./gpt2-small"
 model_version: 10
 ner_model_version: 3
+# For input data
+pretrained_tokenizer: *global_name
+max_token_number: 128
+overlap: 32
+batch_size: 8
