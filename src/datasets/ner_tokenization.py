@@ -159,7 +159,7 @@ class NERTokenizer(ABC):
             for j, mark in enumerate(marks):
                 if mark != self.pad_id:
                     log_prob = log_prob + log_probs[i, j] if log_prob is not None else log_probs[i, j]
-                elif mark == -1 and log_prob is not None:
+                elif mark == self.pad_id and log_prob is not None:
                     real_types_list.append(torch.argmax(log_prob).item())
                     num += 1
                     log_prob = None

@@ -128,7 +128,7 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
                 and self.ner_model is not None and self.ner_tokenizer is not None):
             assert self.ner_tokenizer.pad_id == -1, "Pad id for NER tokenizer must be -1"
             assert self.ner_tokenizer.overlap == 0, "Overlap of NER tokenizer must be 0"
-            sample_answers = [self.tokenizer.parse_answers(gen, st[1]) for st, gen in zip(answers_starts, hard_pred)]
+            sample_answers = [self.tokenizer.parse_answers(gen, st[1]-1) for st, gen in zip(answers_starts, hard_pred)]
             num_answers = [len(answers) for answers in sample_answers]
             pseudo_labels = [[1] * num for num in num_answers]
             ner_input, ner_labels = self._prepare_input_for_ner(sample_answers, pseudo_labels)
@@ -136,7 +136,7 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
                 log_probs = log_softmax(self.ner_model(ner_input), dim=-1)
             real_types_list = self.ner_tokenizer.parse_labels_from_marked_up_log_probs(log_probs, ner_labels,
                                                                                        num_answers)
-            real_types = self.tokenizer.mark_up_types(hard_pred, real_types_list)[:, :-1]
+            real_types = self.tokenizer.mark_up_types(hard_pred, real_types_list)
             loss += self.real_types_match * self.criterion(types_logits, real_types)
             real_type_recall.update(hard_types, real_types)
         # Compute cer statistics
@@ -153,9 +153,10 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
                                  self.train_target_type_recall, self.train_real_type_recall, self.train_cer)
 
         self.log('train_loss', loss.item(), on_step=False, on_epoch=True, logger=True, prog_bar=True)
-        self.log('train_recall', self.train_target_type_recall, on_step=False, on_epoch=True, logger=True,
-                 prog_bar=True)
-        self.log('train_recall', self.train_real_type_recall, on_step=False, on_epoch=True, logger=True, prog_bar=True)
+        self.log('train_target_type_recall', self.train_target_type_recall, on_step=False, on_epoch=True,
+                 logger=True, prog_bar=True)
+        self.log('train_real_type_recall', self.train_real_type_recall, on_step=False, on_epoch=True,
+                 logger=True, prog_bar=True)
         self.log('train_cer', self.train_cer, on_step=False, on_epoch=True, logger=True, prog_bar=True)
         return loss
 
@@ -166,9 +167,10 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
                                  self.val_target_type_recall, self.val_real_type_recall, self.val_cer)
 
         self.log('val_loss', loss.item(), on_step=False, on_epoch=True, logger=True, prog_bar=True)
-        self.log('val_recall', self.val_target_type_recall, on_step=False, on_epoch=True, logger=True,
-                 prog_bar=True)
-        self.log('val_recall', self.val_real_type_recall, on_step=False, on_epoch=True, logger=True, prog_bar=True)
+        self.log('val_target_type_recall', self.val_target_type_recall, on_step=False, on_epoch=True,
+                 logger=True, prog_bar=True)
+        self.log('val_real_type_recall', self.val_real_type_recall, on_step=False, on_epoch=True,
+                 logger=True, prog_bar=True)
         self.log('val_cer', self.val_cer, on_step=False, on_epoch=True, logger=True, prog_bar=True)
 
     @torch.no_grad()
@@ -234,7 +236,7 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
             answers = [answer if answer.strip() else '#' for answer in answers]
             answers = sum([[answer, separator] for answer in answers], [])
             types = sum([[t, -1] for t in types], [])
-            _, tokens, labels = self.ner_tokenizer(answers, types)
+            _, tokens, labels = self.ner_tokenizer(answers or ['#'], types or [-1])
             tokens, labels = tokens[0], labels[0]
             tokenized_answers.append(tokens)
             labels_sets.append(labels)
