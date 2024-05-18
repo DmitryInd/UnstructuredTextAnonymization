@@ -123,7 +123,8 @@ class TextInfillTokenizer(ABC):
             selector = torch.zeros_like(tokenized_input, dtype=torch.bool)
             for mask_type_id in self.mask_type_to_id.values():
                 selector |= (tokenized_input == mask_type_id)
-            target_types_list = tokenized_input[selector]
+            target_types_list = tokenized_input[selector].cpu()
+            target_types_list = np.vectorize(lambda x: self.id_to_mask_type[x].value)(target_types_list).tolist()
 
         target_types_list = target_types_list.__iter__()
         target_types = torch.full_like(tokenized_input, -1)
@@ -135,7 +136,11 @@ class TextInfillTokenizer(ABC):
                 left = -1
                 prev_row = sample_id
             if left != -1:
-                target_types[sample_id, left + 1:pos] = self.id_to_mask_type[target_types_list.__next__()].value
+                try:
+                    target_type = self.id_to_mask_type[target_types_list.__next__()].value
+                except KeyError:
+                    target_type = np.random.choice(list(self.mask_type_to_id.keys())).value
+                target_types[sample_id, left + 1:pos] = target_type
             left = pos
 
         return target_types

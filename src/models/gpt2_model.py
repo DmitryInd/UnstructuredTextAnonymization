@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import Optional, List, Tuple
 
+import numpy as np
 import pytorch_lightning as pl
 import torch
 from torch import nn
@@ -105,8 +106,11 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
                                                                            self.real_types_match))
         logits = logits.transpose(2, 1)  # B, L, C -> B, C, L
         types_logits = types_logits.transpose(2, 1)  # B, L, C -> B, C, L
-        hard_pred = torch.argmax(logits, dim=-2)
+        # Get hard predictions for answer and their types
+        answers_starts = torch.nonzero(inputs == self.tokenizer.start_infill_id).tolist()
+        hard_pred = self.get_hard_prediction(inputs, logits, answers_starts)
         hard_types = torch.argmax(types_logits, dim=-2)
+        # Compute main generation loss
         loss_infill = self.criterion(logits, target_infill[:, 1:])
         loss = loss_infill
         if self.train_context:
@@ -114,7 +118,8 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
             loss += self.train_context * loss_context
         # Compute target labels loss
         if self.target_types_pred and self.tokenizer is not None:
-            target_types_list = inputs[tts == TargetType.CONTEXT_SPECIAL.value].tolist()
+            target_types_list = inputs[tts == TargetType.CONTEXT_SPECIAL.value].cpu()
+            target_types_list = np.vectorize(lambda x: self.tokenizer.id_to_mask_type[x].value)(target_types_list).tolist()
             target_types = self.tokenizer.mark_up_types(inputs, target_types_list)[:, :-1]
             loss += self.target_types_pred * self.criterion(types_logits, target_types)
             target_type_recall.update(hard_types, target_types)
@@ -123,8 +128,7 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
                 and self.ner_model is not None and self.ner_tokenizer is not None):
             assert self.ner_tokenizer.pad_id == -1, "Pad id for NER tokenizer must be -1"
             assert self.ner_tokenizer.overlap == 0, "Overlap of NER tokenizer must be 0"
-            answers_starts = torch.nonzero(inputs == self.tokenizer.start_infill_id).tolist()
-            sample_answers = [self.tokenizer.parse_answers(gen, st[0]) for st, gen in zip(answers_starts, hard_pred)]
+            sample_answers = [self.tokenizer.parse_answers(gen, st[1]) for st, gen in zip(answers_starts, hard_pred)]
             num_answers = [len(answers) for answers in sample_answers]
             pseudo_labels = [[1] * num for num in num_answers]
             ner_input, ner_labels = self._prepare_input_for_ner(sample_answers, pseudo_labels)
@@ -137,11 +141,10 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
             real_type_recall.update(hard_types, real_types)
         # Compute cer statistics
         if self.tokenizer is not None:
-            answers_starts = torch.nonzero(inputs == self.tokenizer.start_infill_id).tolist()
             answers_numbers = (inputs == self.tokenizer.end_infill_id).sum(dim=-1).tolist()
             for answers_start, answers_number, orig, gen in zip(answers_starts, answers_numbers, inputs, hard_pred):
-                cer.update(self.tokenizer.parse_answers(gen, answers_start[0], answers_number),
-                           self.tokenizer.parse_answers(orig, answers_start[0]))
+                cer.update(self.tokenizer.parse_answers(gen, answers_start[1], answers_number),
+                           self.tokenizer.parse_answers(orig, answers_start[1]))
         return loss
 
     def training_step(self, batch, batch_idx):
@@ -201,10 +204,17 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
             inputs,
             torch.full_like(inputs, -1))
 
-    @staticmethod
-    def freeze_params(model: nn.Module, reverse=False):
-        for param in model.parameters():
-            param.requires_grad = reverse
+    def get_hard_prediction(self, inputs: torch.Tensor, logits: torch.Tensor, answers_starts: List[int] = None):
+        assert len(inputs.shape) == 2 and len(logits.shape) == 3, "Shapes of inputs and logits must be BxL and BxCxL"
+        assert inputs.shape[0] == logits.shape[0] and inputs.shape[1] - 1 == logits.shape[2], \
+            "Shapes of inputs and logits do not match"
+        if answers_starts is None:
+            answers_starts = torch.nonzero(inputs == self.tokenizer.start_infill_id).tolist()
+
+        hard_pred = torch.argmax(logits, dim=-2)
+        for i, start in answers_starts:
+            hard_pred[i, :start] = inputs[i, 1:start + 1]
+        return hard_pred
 
     def _prepare_input_for_ner(self, batch_answers: List[List[str]], batch_types: List[List[int]], separator="; ") \
             -> Tuple[torch.Tensor, torch.Tensor]:
@@ -221,6 +231,7 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         tokenized_answers = []
         labels_sets = []
         for answers, types in zip(batch_answers, batch_types):
+            answers = [answer if answer.strip() else '#' for answer in answers]
             answers = sum([[answer, separator] for answer in answers], [])
             types = sum([[t, -1] for t in types], [])
             _, tokens, labels = self.ner_tokenizer(answers, types)
@@ -239,6 +250,11 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
             batch_label_ids[i, :len(labels)] = torch.tensor(labels)
 
         return batch_token_ids, batch_label_ids
+
+    @staticmethod
+    def freeze_params(model: nn.Module, reverse=False):
+        for param in model.parameters():
+            param.requires_grad = reverse
 
     def update_checkpoint(self, path_to_checkpoint: str, new_name: str = None):
         checkpoint = torch.load(path_to_checkpoint)

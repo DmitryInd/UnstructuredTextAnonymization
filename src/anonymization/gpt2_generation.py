@@ -60,6 +60,6 @@ class GPT2GenerationAnonymization(Anonymization):
                 if record_id != last_record_id:
                     last_record_id = record_id
                     predictions.append([])
-                answers = dataset.tokenizer.parse_answers(pred, answers_start[0], masks_number)
+                answers = dataset.tokenizer.parse_answers(pred, answers_start[1], masks_number)
                 predictions[-1].extend(answers)
         return predictions
