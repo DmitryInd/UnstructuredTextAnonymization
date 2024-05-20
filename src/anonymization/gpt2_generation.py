@@ -53,13 +53,13 @@ class GPT2GenerationAnonymization(Anonymization):
         for batch in tqdm(dataloader):
             record_ids, inputs, tts = batch  # B, L
             outputs = self.model.inference(inputs, tts)
-            answers_starts = torch.nonzero(inputs == self.tokenizer.start_infill_id).tolist()
+            answers_starts = torch.nonzero(tts == TargetType.CONTEXT_INFILL_SEP.value)[:, 1].tolist()
             masks_numbers = (tts == TargetType.CONTEXT_SPECIAL.value).sum(dim=-1).tolist()
             for record_id, answers_start, masks_number, pred in zip(record_ids, answers_starts, masks_numbers, outputs):
-                record_id = record_id.split(":")[-1]
+                record_id = record_id.split(":")[0]
                 if record_id != last_record_id:
                     last_record_id = record_id
                     predictions.append([])
-                answers = dataset.tokenizer.parse_answers(pred, answers_start[1], masks_number)
+                answers = dataset.tokenizer.parse_answers(pred, answers_start, masks_number)
                 predictions[-1].extend(answers)
         return predictions

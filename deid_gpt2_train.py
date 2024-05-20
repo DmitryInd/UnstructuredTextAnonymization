@@ -25,7 +25,7 @@ if __name__ == '__main__':
     # Data processing
     model_reader = TensorBoardReader(Path(anon_config["log_dir"]) / Path("lightning_logs"))
     path_to_checkpoint = model_reader.get_ckpt_path(anon_config["model_version"])
-    text_infill_model = PretrainedGPT2TextInfilling.load_from_checkpoint(path_to_checkpoint).to("cuda:0")
+    text_infill_model = PretrainedGPT2TextInfilling.load_from_checkpoint(path_to_checkpoint, strict=False).to("cuda:0")
     anonymization = GPT2GenerationAnonymization(text_infill_model,
                                                 label2type=lambda x: MaskEntityType[x.upper()],
                                                 mask_types=list(MaskEntityType), **anon_config)

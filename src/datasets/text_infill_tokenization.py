@@ -119,9 +119,10 @@ class TextInfillTokenizer(ABC):
         :return: тензор типов B x L
         """
         assert tokenized_input.dim() == 2, "Input must have 2 dimensions: B, L"
+        valid_types_values = set(x.value for x in self.mask_type_to_id.keys())
         if target_types_list is None:
             selector = torch.zeros_like(tokenized_input, dtype=torch.bool)
-            for mask_type_id in self.mask_type_to_id.values():
+            for mask_type_id in self.id_to_mask_type.keys():
                 selector |= (tokenized_input == mask_type_id)
             target_types_list = tokenized_input[selector].cpu()
             target_types_list = np.vectorize(lambda x: self.id_to_mask_type[x].value)(target_types_list).tolist()
@@ -138,10 +139,9 @@ class TextInfillTokenizer(ABC):
                 prev_row = sample_id
                 left = pos
             elif tokenized_input[sample_id, pos] != self.start_infill_id:
-                try:
-                    target_type = self.id_to_mask_type[target_types_list.__next__()].value
-                except KeyError:
-                    target_type = np.random.choice(list(self.mask_type_to_id.keys())).value
+                target_type = target_types_list.__next__()
+                if target_type not in valid_types_values:
+                    target_type = np.random.choice(list(valid_types_values))
                 target_types[sample_id, left + 1:pos] = target_type
                 left = pos
 

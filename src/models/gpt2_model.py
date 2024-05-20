@@ -107,8 +107,8 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         logits = logits.transpose(2, 1)  # B, L, C -> B, C, L
         types_logits = types_logits.transpose(2, 1)  # B, L, C -> B, C, L
         # Get hard predictions for answer and their types
-        answers_starts = torch.nonzero(inputs == self.tokenizer.start_infill_id).tolist()
-        hard_pred = self.get_hard_prediction(inputs, logits, answers_starts)
+        answers_starts = torch.nonzero(tts == TargetType.CONTEXT_INFILL_SEP.value).tolist()
+        hard_pred = self._get_hard_prediction(inputs, logits, answers_starts)
         hard_types = torch.argmax(types_logits, dim=-2)
         # Compute main generation loss
         loss_infill = self.criterion(logits, target_infill[:, 1:])
@@ -174,9 +174,12 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         self.log('val_cer', self.val_cer, on_step=False, on_epoch=True, logger=True, prog_bar=True)
 
     @torch.no_grad()
-    def inference(self, inputs: torch.Tensor, tts: torch.Tensor):
+    def inference(self, inputs: torch.Tensor, tts: torch.Tensor, fresh_start=False):
         masks_number = (tts == TargetType.CONTEXT_SPECIAL.value).sum(dim=1)
-        positions = (tts != TargetType.PAD.value).sum(dim=1)
+        if fresh_start:
+            positions = torch.nonzero(tts == TargetType.CONTEXT_INFILL_SEP.value)[:, 1] + 1
+        else:
+            positions = (tts != TargetType.PAD.value).sum(dim=1)
         finished = set()
         while len(finished) < inputs.shape[0]:
             logits, _ = self.forward(inputs)  # B, L, C
@@ -206,10 +209,12 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
             inputs,
             torch.full_like(inputs, -1))
 
-    def get_hard_prediction(self, inputs: torch.Tensor, logits: torch.Tensor, answers_starts: List[int] = None):
-        assert len(inputs.shape) == 2 and len(logits.shape) == 3, "Shapes of inputs and logits must be BxL and BxCxL"
+    def _get_hard_prediction(self, inputs: torch.Tensor, logits: torch.Tensor,
+                            answers_starts: List[Tuple[int, int]] | None = None):
+        assert len(inputs.shape) == 2 and len(logits.shape) == 3, \
+            "The shapes of inputs and logits must be BxL and BxCx(L-1)"
         assert inputs.shape[0] == logits.shape[0] and inputs.shape[1] - 1 == logits.shape[2], \
-            "Shapes of inputs and logits do not match"
+            "The shapes of inputs and logits do not match"
         if answers_starts is None:
             answers_starts = torch.nonzero(inputs == self.tokenizer.start_infill_id).tolist()
 

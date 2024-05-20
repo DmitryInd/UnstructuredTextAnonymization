@@ -2,7 +2,6 @@ import sys
 from pathlib import Path
 
 import pytorch_lightning as pl
-import torch
 import yaml
 from pytorch_lightning.callbacks import ModelCheckpoint, early_stopping
 from torch.utils.data import DataLoader
@@ -52,6 +51,7 @@ if __name__ == '__main__':
     # Pytorch lightning
     ner_reader = TensorBoardReader(Path(ner_model_config["log_dir"]) / Path("lightning_logs"))
     ner_model = PretrainedBertNER.load_from_checkpoint(ner_reader.get_ckpt_path(model_config["ner_model_version"]))
+    ner_model.eval()
     model_reader = TensorBoardReader(Path(model_config["log_dir"]) / Path("lightning_logs"))
     path_to_checkpoint = model_reader.get_ckpt_path(model_config["model_version"])
     text_infill_model = PretrainedGPT2TextInfilling.load_from_checkpoint(

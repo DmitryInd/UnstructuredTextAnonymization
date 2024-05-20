@@ -156,7 +156,7 @@ class NERTokenizer(ABC):
                     real_types_list.append(torch.argmax(log_prob).item())
                     log_prob = None
                     num += 1
-                    if num >= labels_number[i]:
+                    if labels_number is not None and num >= labels_number[i]:
                         break
             if labels_number is not None and labels_number[i] > num:
                 real_types_list.extend([self.pad_id] * (labels_number[i] - num))
