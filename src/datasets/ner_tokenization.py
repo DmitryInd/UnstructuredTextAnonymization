@@ -254,12 +254,12 @@ class WordPieceNERTokenizer(NERTokenizer):
                 else:
                     predicted_tokens.append(word_tokens)
                     predicted_labels.append(final_label)
-                possible_labels = {}
+                possible_labels = np.zeros((max_label_id + 1, ), dtype=np.float64)
                 word_tokens = []
             if token == self.eos_token:
                 break
             if token == self.unknown_token or token not in special_tokens:
-                word_tokens += token
+                word_tokens.append(token_id)
                 if isinstance(label, int):
                     # If there is only labels, their frequencies are just used
                     probs = np.eye(max_label_id + 1, dtype=np.float64)[label]
@@ -277,7 +277,7 @@ class WordPieceNERTokenizer(NERTokenizer):
                 predicted_labels.append(final_label)
                 predicted_tokens.append(word_tokens)
         # Decode token subsequences to substrings, the concatenation of substrings must give a reasonable text
-        predicted_tokens = [' ' + self._tokenizer.decode(tokens, skip_special_tokens=True)
+        predicted_tokens = [' ' + self._tokenizer.decode(tokens, skip_special_tokens=False)
                             for tokens in predicted_tokens]
         predicted_tokens[0] = predicted_tokens[0][1:]
         return predicted_tokens, predicted_labels
