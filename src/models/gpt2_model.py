@@ -177,41 +177,24 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
     def inference(self, inputs: torch.Tensor, tts: torch.Tensor, fresh_start=False):
         masks_number = (tts == TargetType.CONTEXT_SPECIAL.value).sum(dim=1)
         if fresh_start:
-            positions = torch.nonzero(tts == TargetType.CONTEXT_INFILL_SEP.value)[:, 1]
+            start_positions = torch.nonzero(tts == TargetType.CONTEXT_INFILL_SEP.value)[:, 1]
         else:
-            positions = (tts != TargetType.PAD.value).sum(dim=1) - 1
-        l_border = positions.min().item()
-        r_border = positions.max().item()
+            start_positions = (tts != TargetType.PAD.value).sum(dim=1) - 1
+        l_border = start_positions.min().item()
         past_key_values = None
         finished = set()
-        # Firstly, align all inputs
-        while l_border < r_border + 1 and len(finished) < inputs.shape[0]:
+        while len(finished) < inputs.shape[0]:
             shift = l_border if past_key_values is not None else 0
             results = self.model(inputs[:, shift: l_border + 1], past_key_values=past_key_values)
             hard_pred = torch.argmax(results.logits, dim=-1)  # B, L, C
             for i, row in enumerate(hard_pred):
-                if positions[i] > l_border:
+                if start_positions[i] > l_border:
                     continue
                 if (l_border + 1) >= inputs.shape[1] or masks_number[i] <= 0:
                     finished.add(i)
                     continue
                 inputs[i, l_border + 1] = row[l_border - shift]
                 if row[l_border - shift] == self.end_infill_id:
-                    masks_number[i] -= 1
-
-            l_border += 1
-            past_key_values = [[x[0][:, :, :l_border, :], x[1][:, :, :l_border, :]] for x in results.past_key_values]
-
-        # Secondly, compute all predictions together
-        while len(finished) < inputs.shape[0]:
-            results = self.model(inputs[:, l_border: l_border + 1], past_key_values=past_key_values)
-            hard_pred = torch.argmax(results.logits, dim=-1)  # B, L, C
-            for i, row in enumerate(hard_pred):
-                if (l_border + 1) >= inputs.shape[1] or masks_number[i] <= 0:
-                    finished.add(i)
-                    continue
-                inputs[i, l_border + 1] = row[0]
-                if row[0] == self.end_infill_id:
                     masks_number[i] -= 1
 
             l_border += 1
