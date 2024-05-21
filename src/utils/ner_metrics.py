@@ -7,6 +7,7 @@ from sklearn.metrics import classification_report
 from tabulate import tabulate
 from torch import nn
 from torch.utils.data import DataLoader
+from tqdm.auto import tqdm
 
 
 class Statistics:
@@ -31,7 +32,7 @@ class Statistics:
         record_ids = []
         predictions = []
         true_labels = []
-        for batch_ids, inputs, labels in self.loader:
+        for batch_ids, inputs, labels in tqdm(self.loader):
             inputs = inputs.to(self.device)
             batch_pred = self.model(inputs).cpu().argmax(2)
             for sample_id, prediction, label in zip(batch_ids, batch_pred, labels.cpu()):
@@ -112,11 +113,13 @@ class Statistics:
             _, token_ids, label_ids = self.dataset[idx]
             pred_ids = self.model(token_ids.to(self.device).unsqueeze(0))[0].argmax(1)
             token_ids, label_ids, pred_ids = token_ids.tolist(), label_ids.tolist(), pred_ids.tolist()
-            sentence, true_label_ids = self.tokenizer.decode(token_ids, label_ids)
-            _, pred_label_ids = self.tokenizer.decode(token_ids, pred_ids)
+            true_segments, true_label_ids = self.tokenizer.decode(token_ids, label_ids)
+            pred_segments, pred_label_ids = self.tokenizer.decode(token_ids, pred_ids)
             print('_'*5 + f' Record {record_id} ' + '_'*5)
-            print(tabulate([['Sentence:'] + sentence,
-                            ['True labels:'] + [self.index2label[index] for index in true_label_ids],
+            print(tabulate([['Sentence:'] + true_segments,
+                            ['True labels:'] + [self.index2label[index] for index in true_label_ids]],
+                           tablefmt='orgtbl'))
+            print(tabulate([['Sentence:'] + pred_segments,
                             ['Pred labels:'] + [self.index2label[index] for index in pred_label_ids]],
                            tablefmt='orgtbl'))
 

@@ -177,22 +177,29 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
     def inference(self, inputs: torch.Tensor, tts: torch.Tensor, fresh_start=False):
         masks_number = (tts == TargetType.CONTEXT_SPECIAL.value).sum(dim=1)
         if fresh_start:
-            positions = torch.nonzero(tts == TargetType.CONTEXT_INFILL_SEP.value)[:, 1] + 1
+            positions = torch.nonzero(tts == TargetType.CONTEXT_INFILL_SEP.value)[:, 1]
         else:
-            positions = (tts != TargetType.PAD.value).sum(dim=1)
+            positions = (tts != TargetType.PAD.value).sum(dim=1) - 1
+        l_border = positions.min().item()
+        r_border = positions.max().item()
+        past_key_values = None
         finished = set()
         while len(finished) < inputs.shape[0]:
-            logits, _ = self.forward(inputs)  # B, L, C
-            hard_pred = torch.argmax(logits, dim=-1)
+            shift = l_border if past_key_values is not None else 0
+            results = self.model(inputs[:, shift:], past_key_values=past_key_values)
+            hard_pred = torch.argmax(results.logits, dim=-1)  # B, L, C
             for i, row in enumerate(hard_pred):
                 pos = positions[i]
-                if pos >= inputs.shape[1] or masks_number[i] <= 0:
+                if (pos + 1) >= inputs.shape[1] or masks_number[i] <= 0:
                     finished.add(i)
                     continue
-                inputs[i, pos] = row[pos - 1]
-                if row[pos - 1] == self.end_infill_id:
+                inputs[i, pos + 1] = row[pos - shift]
+                if row[pos - shift] == self.end_infill_id:
                     masks_number[i] -= 1
                 positions[i] += 1
+
+            l_border += 1
+            past_key_values = [[x[0][:, :, :l_border, :], x[1][:, :, :l_border, :]] for x in results.past_key_values]
 
         return inputs
 

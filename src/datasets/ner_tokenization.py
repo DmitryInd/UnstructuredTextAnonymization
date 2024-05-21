@@ -17,7 +17,7 @@ class NERTokenizer(ABC):
                  max_sent_len: int = None, overlap=32, pretrained_name: str = None):
         """
         :param sentence_list: список предложений для обучения, разбитых на размеченные части
-        :param pad_id: id класса 'other'
+        :param pad_id: id метки для паддинга (pad/sos/eos токенов)
         :param pad_flag: нужно ли дополнять последовательности токенов до максимальной длины
         :param max_sent_len: максимальная допустимая длина предложений в токенах (+2)
         :param overlap: пересечение последовательных токенизированных отрезков
