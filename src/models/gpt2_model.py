@@ -184,23 +184,38 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         r_border = positions.max().item()
         past_key_values = None
         finished = set()
-        while len(finished) < inputs.shape[0]:
+        # Firstly, align all inputs
+        while l_border < r_border + 1 and len(finished) < inputs.shape[0]:
             shift = l_border if past_key_values is not None else 0
-            results = self.model(inputs[:, shift:], past_key_values=past_key_values)
+            results = self.model(inputs[:, shift: l_border + 1], past_key_values=past_key_values)
             hard_pred = torch.argmax(results.logits, dim=-1)  # B, L, C
             for i, row in enumerate(hard_pred):
-                pos = positions[i]
-                if (pos + 1) >= inputs.shape[1] or masks_number[i] <= 0:
+                if positions[i] > l_border:
+                    continue
+                if (l_border + 1) >= inputs.shape[1] or masks_number[i] <= 0:
                     finished.add(i)
                     continue
-                inputs[i, pos + 1] = row[pos - shift]
-                if row[pos - shift] == self.end_infill_id:
+                inputs[i, l_border + 1] = row[l_border - shift]
+                if row[l_border - shift] == self.end_infill_id:
                     masks_number[i] -= 1
-                positions[i] += 1
 
             l_border += 1
             past_key_values = [[x[0][:, :, :l_border, :], x[1][:, :, :l_border, :]] for x in results.past_key_values]
 
+        # Secondly, compute all predictions together
+        while len(finished) < inputs.shape[0]:
+            results = self.model(inputs[:, l_border: l_border + 1], past_key_values=past_key_values)
+            hard_pred = torch.argmax(results.logits, dim=-1)  # B, L, C
+            for i, row in enumerate(hard_pred):
+                if (l_border + 1) >= inputs.shape[1] or masks_number[i] <= 0:
+                    finished.add(i)
+                    continue
+                inputs[i, l_border + 1] = row[0]
+                if row[0] == self.end_infill_id:
+                    masks_number[i] -= 1
+
+            l_border += 1
+            past_key_values = [[x[0][:, :, :l_border, :], x[1][:, :, :l_border, :]] for x in results.past_key_values]
         return inputs
 
     @staticmethod
