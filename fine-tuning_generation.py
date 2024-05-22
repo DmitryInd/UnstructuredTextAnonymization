@@ -72,7 +72,7 @@ if __name__ == '__main__':
     print(text_infill_model)
     text_infill_checkpoint_callback = ModelCheckpoint(filename='best-{epoch}', monitor='val_loss',
                                                       mode='min', save_top_k=1)
-    early_stopping_callback = early_stopping.EarlyStopping(monitor="val_loss", patience=5, mode='min')
+    early_stopping_callback = early_stopping.EarlyStopping(monitor="val_loss", patience=20, mode='min')
     trainer_args = {
         "accelerator": "gpu",
         "log_every_n_steps": 1,

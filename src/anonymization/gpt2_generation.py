@@ -3,7 +3,7 @@ from typing import List, Optional
 
 import torch
 from torch.utils.data import DataLoader
-from tqdm import tqdm
+from tqdm.auto import tqdm
 
 from anonymization.base import Anonymization
 from datasets.text_infill_dataset import FromListMarkedUpTextInfillDataset, get_ngram_type, MaskNgramType
@@ -52,7 +52,8 @@ class GPT2GenerationAnonymization(Anonymization):
         last_record_id = ""
         for batch in tqdm(dataloader):
             record_ids, inputs, tts = batch  # B, L
-            outputs = self.model.inference(inputs, tts)
+            with torch.no_grad():
+                outputs, _ = self.model.inference(inputs, tts)
             answers_starts = torch.nonzero(tts == TargetType.CONTEXT_INFILL_SEP.value)[:, 1].tolist()
             masks_numbers = (tts == TargetType.CONTEXT_SPECIAL.value).sum(dim=-1).tolist()
             for record_id, answers_start, masks_number, pred in zip(record_ids, answers_starts, masks_numbers, outputs):
@@ -60,6 +61,6 @@ class GPT2GenerationAnonymization(Anonymization):
                 if record_id != last_record_id:
                     last_record_id = record_id
                     predictions.append([])
-                answers = dataset.tokenizer.parse_answers(pred, answers_start, masks_number)
+                answers = dataset.tokenizer.parse_answers(pred, answers_start + 1, masks_number)
                 predictions[-1].extend(answers)
         return predictions

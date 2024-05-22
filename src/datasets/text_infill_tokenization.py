@@ -82,16 +82,16 @@ class TextInfillTokenizer(ABC):
     def parse_answers(self, prediction: Tensor, answers_start=-1, masks_number=-1, till_the_end=False) -> List[str]:
         """
         :param prediction: tensor[int] 1 x len - выход модели для одного примера
-        :param answers_start: номер токена, с которого начинается генерация ответов
+        :param answers_start: номер токена, с которого включительно начинается генерация ответов
         :param masks_number: целевое количество заполняемых пропусков
         :param till_the_end: обрабатывать ли текст после последнего end_infill токена,
                              если остались необработанные токены (обычно они это pad токены)
         :return: список декодированных слов, предсказанных моделью для заполнения пропусков
         """
         if answers_start < 0:
-            answers_start = torch.nonzero(prediction == self.start_infill_id)[0, 0].item()
+            answers_start = torch.nonzero(prediction == self.start_infill_id)[0, 0].item() + 1
 
-        answers = prediction[answers_start + 1:].tolist()
+        answers = prediction[answers_start:].tolist()
         answers_list = []
         while answers:
             try:

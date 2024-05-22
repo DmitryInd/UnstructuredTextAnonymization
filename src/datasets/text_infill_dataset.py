@@ -11,7 +11,7 @@ from typing import Tuple, List, Optional
 import numpy as np
 import torch
 from torch.utils.data import Dataset
-from tqdm import tqdm
+from tqdm.auto import tqdm
 
 from datasets.ner_dataset import LABEL_MEMBERSHIP
 from datasets.text_infill_tokenization import OfficialGPT2TextInfillTokenizer
