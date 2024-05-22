@@ -7,7 +7,7 @@ import torch
 from torch import nn
 from torch.nn import Sequential, Linear, LeakyReLU
 from torch.nn.functional import log_softmax
-from torchmetrics import Recall
+from torchmetrics import Recall, Metric
 from torchmetrics.text import CharErrorRate
 from torchmetrics.functional.text.cer import char_error_rate
 from torch.nn.functional import gumbel_softmax
@@ -110,7 +110,8 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         )
         return [optimizer], [scheduler]
 
-    def classic_step(self, inputs, tts, target_type_recall, real_type_recall, cer):
+    def classic_step(self, inputs: torch.Tensor, tts: torch.Tensor,
+                     target_type_recall: Metric, real_type_recall: Metric, cer: CharErrorRate) -> torch.Tensor:
         target_context = self.tts_to_targets(inputs, tts, [TargetType.CONTEXT])
         target_infill = self.tts_to_targets(inputs, tts, [TargetType.INFILL, TargetType.INFILL_SPECIAL])
         logits, types_logits = self.forward(inputs[:, :-1],
@@ -118,8 +119,8 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         logits = logits.transpose(2, 1)  # B, L, C -> B, C, L
         types_logits = types_logits.transpose(2, 1)  # B, L, C -> B, C, L
         # Get hard predictions for answer and their types
-        answers_starts = torch.nonzero(tts == TargetType.CONTEXT_INFILL_SEP.value).tolist()
-        hard_pred = self._get_hard_prediction(inputs, logits, answers_starts)
+        answers_starts = (torch.nonzero(tts == TargetType.CONTEXT_INFILL_SEP.value)[:, 1] + 1).tolist()
+        hard_pred = self._get_hard_prediction(logits, inputs, answers_starts)
         hard_types = torch.argmax(types_logits, dim=-2)
         # Compute main generation loss
         loss_infill = self.criterion(logits, target_infill[:, 1:])
@@ -140,7 +141,7 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
                 and self.ner_model is not None and self.ner_tokenizer is not None):
             assert self.ner_tokenizer.pad_id == -1, "Pad id for NER tokenizer must be -1"
             assert self.ner_tokenizer.overlap == 0, "Overlap of NER tokenizer must be 0"
-            sample_answers = [self.tokenizer.parse_answers(gen, st[1]) for st, gen in zip(answers_starts, hard_pred)]
+            sample_answers = [self.tokenizer.parse_answers(gen, st - 1) for st, gen in zip(answers_starts, hard_pred)]
             num_answers = [len(answers) for answers in sample_answers]
             pseudo_labels = [[1] * num for num in num_answers]
             ner_input, ner_labels = self._prepare_input_for_ner(sample_answers, pseudo_labels)
@@ -155,23 +156,26 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         if self.tokenizer is not None:
             answers_numbers = (inputs == self.tokenizer.end_infill_id).sum(dim=-1).tolist()
             for answers_start, answers_number, orig, gen in zip(answers_starts, answers_numbers, inputs, hard_pred):
-                cer.update(self.tokenizer.parse_answers(gen, answers_start[1], answers_number),
-                           self.tokenizer.parse_answers(orig, answers_start[1] + 1))
+                cer.update(self.tokenizer.parse_answers(gen, answers_start - 1, answers_number),
+                           self.tokenizer.parse_answers(orig, answers_start))
         return loss
 
-    def rl_policy_gradient_step(self, inputs, tts, target_type_recall, real_type_recall, cer):
+    def rl_policy_gradient_step(self, inputs: torch.Tensor, tts: torch.Tensor, cer: CharErrorRate) \
+            -> Tuple[torch.Tensor, torch.Tensor]:
         assert self.tokenizer is not None and self.ner_tokenizer is not None and self.ner_model is not None
         assert self.ner_tokenizer.pad_id == -1, "Pad id for NER tokenizer must be -1"
         assert self.ner_tokenizer.overlap == 0, "Overlap of NER tokenizer must be 0"
 
         with torch.no_grad():
-            hard_pred, _ = self.inference(inputs, tts, temperature=self.sample_temperature, fresh_start=True)
+            hard_pred, _ = self.inference(inputs, tts,
+                                          temperature=self.sample_temperature if self.training else 0.,
+                                          fresh_start=True)
         logits, _ = self.forward(torch.maximum(hard_pred[:, :-1], torch.tensor(0)))
         logits = logits.transpose(1, 2)
         # Get hard predictions for answer and their types
-        answers_starts = torch.nonzero(tts == TargetType.CONTEXT_INFILL_SEP.value).tolist()
+        answers_starts = (torch.nonzero(tts == TargetType.CONTEXT_INFILL_SEP.value)[:, 1] + 1).tolist()
         masks_num = (tts == TargetType.CONTEXT_SPECIAL.value).sum(dim=-1).tolist()
-        sample_answers = [self.tokenizer.parse_answers(gen, st[1], n)
+        sample_answers = [self.tokenizer.parse_answers(gen, st, n)
                           for st, n, gen in zip(answers_starts, masks_num, hard_pred)]
         # Get target types of infilled masks
         labels = []
@@ -185,13 +189,13 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         ner_input, ner_labels = self._prepare_input_for_ner(sample_answers, labels)
         with torch.no_grad():
             ner_logits = self.ner_model(ner_input).transpose(1, 2)  # B, L, C -> B, C, L
-        reward = -self.rl_criterion(ner_logits, ner_labels).mean(dim=-1)  # B, C, L -> B, L -> B
+        reward = -self.rl_criterion(ner_logits, ner_labels).sum(dim=-1) / (ner_labels != -1).sum(dim=-1)  # B, C, L -> B, L -> B
         # Compute distance between original and predicted answers
         local_cer = []
         answers_numbers = (inputs == self.tokenizer.end_infill_id).sum(dim=-1).tolist()
         for answers_start, answers_number, orig, gen in zip(answers_starts, answers_numbers, inputs, hard_pred):
-            gen_answers = self.tokenizer.parse_answers(gen, answers_start[1] + 1, answers_number)
-            orig_answers = self.tokenizer.parse_answers(orig, answers_start[1] + 1)
+            gen_answers = self.tokenizer.parse_answers(gen, answers_start, answers_number)
+            orig_answers = self.tokenizer.parse_answers(orig, answers_start)
             cer.update(gen_answers, orig_answers)
             if self.maximize_distance:
                 local_cer.append(char_error_rate(gen_answers, orig_answers))
@@ -202,9 +206,9 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
             hard_pred, tts,
             [TargetType.CONTEXT, TargetType.CONTEXT_SPECIAL, TargetType.CONTEXT_INFILL_SEP], reverse=True
         )
-        loss = torch.mean(reward *
-                          self.rl_criterion(logits, target_infill[:, 1: logits.size(2) + 1]).mean(dim=-1))
-        return loss
+        loss = torch.mean(reward * self.rl_criterion(logits, target_infill[:, 1: logits.size(2) + 1]).sum(dim=-1)
+                          / (target_infill == -1).sum(dim=-1))
+        return reward.mean(), loss
 
     def training_step(self, batch, batch_idx):
         _, inputs, tts = batch  # B, L
@@ -212,17 +216,20 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
             loss = self.classic_step(inputs, tts,
                                      self.train_target_type_recall, self.train_real_type_recall, self.train_cer)
         elif self.step_type == 'rl':
-            loss = self.rl_policy_gradient_step(inputs, tts, self.train_target_type_recall,
-                                                self.train_real_type_recall, self.train_cer)
+            reward, loss = self.rl_policy_gradient_step(inputs, tts, self.train_cer)
         else:
             raise ValueError(f'Unrecognized step_type: {self.step_type}')
 
         self.log('train_loss', loss.item(), on_step=False, on_epoch=True, logger=True, prog_bar=True)
-        self.log('train_target_type_recall', self.train_target_type_recall, on_step=False, on_epoch=True,
-                 logger=True, prog_bar=True)
-        self.log('train_real_type_recall', self.train_real_type_recall, on_step=False, on_epoch=True,
-                 logger=True, prog_bar=True)
         self.log('train_cer', self.train_cer, on_step=False, on_epoch=True, logger=True, prog_bar=True)
+        if self.step_type == 'classic':
+            self.log('train_target_type_recall', self.train_target_type_recall, on_step=False, on_epoch=True,
+                     logger=True, prog_bar=True)
+            self.log('train_real_type_recall', self.train_real_type_recall, on_step=False, on_epoch=True,
+                     logger=True, prog_bar=True)
+        elif self.step_type == 'rl':
+            self.log('train_reward', reward.item(), on_step=False, on_epoch=True, logger=True, prog_bar=True)
+
         return loss
 
     @torch.no_grad()
@@ -232,17 +239,19 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
             loss = self.classic_step(inputs, tts,
                                      self.val_target_type_recall, self.val_real_type_recall, self.val_cer)
         elif self.step_type == 'rl':
-            loss = self.rl_policy_gradient_step(inputs, tts, self.val_target_type_recall,
-                                                self.val_real_type_recall, self.val_cer)
+            reward, loss = self.rl_policy_gradient_step(inputs, tts, self.val_cer)
         else:
             raise ValueError(f'Unrecognized step_type: {self.step_type}')
 
         self.log('val_loss', loss.item(), on_step=False, on_epoch=True, logger=True, prog_bar=True)
-        self.log('val_target_type_recall', self.val_target_type_recall, on_step=False, on_epoch=True,
-                 logger=True, prog_bar=True)
-        self.log('val_real_type_recall', self.val_real_type_recall, on_step=False, on_epoch=True,
-                 logger=True, prog_bar=True)
         self.log('val_cer', self.val_cer, on_step=False, on_epoch=True, logger=True, prog_bar=True)
+        if self.step_type == 'classic':
+            self.log('val_target_type_recall', self.val_target_type_recall, on_step=False, on_epoch=True,
+                     logger=True, prog_bar=True)
+            self.log('val_real_type_recall', self.val_real_type_recall, on_step=False, on_epoch=True,
+                     logger=True, prog_bar=True)
+        elif self.step_type == 'rl':
+            self.log('val_reward', reward.item(), on_step=False, on_epoch=True, logger=True, prog_bar=True)
 
     def inference(self, inputs: torch.Tensor, tts: torch.Tensor, temperature=0.0, fresh_start=False):
         predictions = inputs.detach().clone()  # B, L
@@ -294,18 +303,18 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
             inputs,
             torch.full_like(inputs, -1))
 
-    def _get_hard_prediction(self, inputs: torch.Tensor, logits: torch.Tensor,
-                             answers_starts: List[Tuple[int, int]] | None = None):
+    @staticmethod
+    def _get_hard_prediction(self, logits: torch.Tensor, inputs: torch.Tensor | None,
+                             answers_starts: List[int] | None = None):
         assert len(inputs.shape) == 2 and len(logits.shape) == 3, \
             "The shapes of inputs and logits must be BxL and BxCx(L-1)"
         assert inputs.shape[0] == logits.shape[0] and inputs.shape[1] - 1 == logits.shape[2], \
             "The shapes of inputs and logits do not match"
-        if answers_starts is None:
-            answers_starts = torch.nonzero(inputs == self.tokenizer.start_infill_id).tolist()
 
         hard_pred = torch.argmax(logits, dim=-2)
-        for i, start in answers_starts:
-            hard_pred[i, :start] = inputs[i, 1:start + 1]
+        if inputs is not None and answers_starts is not None:
+            for i, start in enumerate(answers_starts):
+                hard_pred[i, :start - 1] = inputs[i, 1:start]
         return hard_pred
 
     def _prepare_input_for_ner(self, batch_answers: List[List[str]], batch_types: List[List[int]], separator="; ") \

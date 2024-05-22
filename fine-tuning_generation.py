@@ -70,9 +70,16 @@ if __name__ == '__main__':
                                                             overlap=0,
                                                             pretrained_name=ner_model_config["pretrained_tokenizer"])
     print(text_infill_model)
-    text_infill_checkpoint_callback = ModelCheckpoint(filename='best-{epoch}', monitor='val_loss',
-                                                      mode='min', save_top_k=1)
-    early_stopping_callback = early_stopping.EarlyStopping(monitor="val_loss", patience=20, mode='min')
+    if model_config["step_type"] == "classic":
+        text_infill_checkpoint_callback = ModelCheckpoint(filename='best-{epoch}', monitor='val_loss',
+                                                          mode='min', save_top_k=1)
+        early_stopping_callback = early_stopping.EarlyStopping(monitor="val_loss", patience=5, mode='min')
+    elif model_config["step_type"] == "rl":
+        text_infill_checkpoint_callback = ModelCheckpoint(filename='best-{epoch}', monitor='val_reward',
+                                                          mode='max', save_top_k=1)
+        early_stopping_callback = early_stopping.EarlyStopping(monitor="val_reward", patience=5, mode='max')
+    else:
+        raise ValueError(f"Invalid step_type: {model_config['step_type']}")
     trainer_args = {
         "accelerator": "gpu",
         "log_every_n_steps": 1,
