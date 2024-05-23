@@ -122,14 +122,14 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
                      target_type_recall: Metric, real_type_recall: Metric, cer: CharErrorRate) -> torch.Tensor:
         target_context = self.tts_to_targets(inputs, tts, [TargetType.CONTEXT])
         target_infill = self.tts_to_targets(inputs, tts, [TargetType.INFILL, TargetType.INFILL_SPECIAL])
-        logits, types_logits = self.forward(inputs[:, :-1],
-                                            gen_types=bool(self.target_types_pred or self.real_types_match))
-        logits = logits.transpose(2, 1)  # B, L, C -> B, C, L
-        types_logits = types_logits.transpose(2, 1)  # B, L, C -> B, C, L
-        # Get hard predictions for answer and their types
+        logits, types_logits = self.forward(inputs[:, :-1], gen_types=self.target_types_pred > 0.)
+        logits, types_logits = logits.transpose(2, 1), types_logits.transpose(2, 1)  # B, L, C -> B, C, L
+        # Get fair predictions for answer and their types
         answers_starts = (torch.nonzero(tts == TargetType.CONTEXT_INFILL_SEP.value)[:, 1] + 1).tolist()
-        hard_pred = self._get_hard_prediction(logits, inputs, answers_starts)
-        hard_types = torch.argmax(types_logits, dim=-2)
+        with torch.no_grad():
+            generated, _ = self.inference(inputs, tts,
+                                          temperature=self.sample_temperature if self.training else 0.,
+                                          fresh_start=True)
         # Compute main generation loss
         loss_infill = self.criterion(logits, target_infill[:, 1:])
         loss = loss_infill
@@ -143,13 +143,15 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
                 target_types_list).tolist()
             target_types = self.tokenizer.mark_up_types(inputs, target_types_list)[:, :-1]
             loss += self.target_types_pred * self.criterion(types_logits, target_types)
-            target_type_recall.update(hard_types, target_types)
+            target_type_recall.update(torch.argmax(types_logits, dim=-2), target_types)
         # Compute real labels loss
         if (self.real_types_match and self.tokenizer is not None
                 and self.ner_model is not None and self.ner_tokenizer is not None):
             assert self.ner_tokenizer.pad_id == -1, "Pad id for NER tokenizer must be -1"
             assert self.ner_tokenizer.overlap == 0, "Overlap of NER tokenizer must be 0"
-            sample_answers = [self.tokenizer.parse_answers(gen, st - 1) for st, gen in zip(answers_starts, hard_pred)]
+            _, g_types_logits = self.forward(torch.maximum(generated[:, :-1], torch.tensor(0)), gen_types=True)
+            g_types_logits = g_types_logits.transpose(2, 1)  # B, L, C -> B, C, L
+            sample_answers = [self.tokenizer.parse_answers(gen, st) for st, gen in zip(answers_starts, generated)]
             num_answers = [len(answers) for answers in sample_answers]
             pseudo_labels = [[1] * num for num in num_answers]
             ner_input, ner_labels = self._prepare_input_for_ner(sample_answers, pseudo_labels)
@@ -157,14 +159,14 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
                 log_probs = log_softmax(self.ner_model(ner_input), dim=-1)
             real_types_list = self.ner_tokenizer.parse_labels_from_marked_up_log_probs(log_probs, ner_labels,
                                                                                        num_answers)
-            real_types = self.tokenizer.mark_up_types(hard_pred, real_types_list)
-            loss += self.real_types_match * self.criterion(types_logits, real_types)
-            real_type_recall.update(hard_types, real_types)
+            real_types = self.tokenizer.mark_up_types(generated, real_types_list)[:, :-1]
+            loss += self.real_types_match * self.criterion(g_types_logits, real_types)
+            real_type_recall.update(torch.argmax(g_types_logits, dim=-2), real_types)
         # Compute cer statistics
         if self.tokenizer is not None:
             answers_numbers = (inputs == self.tokenizer.end_infill_id).sum(dim=-1).tolist()
-            for answers_start, answers_number, orig, gen in zip(answers_starts, answers_numbers, inputs, hard_pred):
-                cer.update(self.tokenizer.parse_answers(gen, answers_start - 1, answers_number),
+            for answers_start, answers_number, orig, gen in zip(answers_starts, answers_numbers, inputs, generated):
+                cer.update(self.tokenizer.parse_answers(gen, answers_start, answers_number),
                            self.tokenizer.parse_answers(orig, answers_start))
         return loss
 
