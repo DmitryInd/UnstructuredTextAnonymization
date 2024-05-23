@@ -83,6 +83,7 @@ if __name__ == '__main__':
     trainer_args = {
         "accelerator": "gpu",
         "log_every_n_steps": 1,
+        "gradient_clip_val": 100,
         "max_epochs": model_config["epochs"],
         "default_root_dir": model_config["log_dir"],
         "callbacks": [text_infill_checkpoint_callback, early_stopping_callback]
