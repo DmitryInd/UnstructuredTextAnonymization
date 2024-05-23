@@ -1,13 +1,15 @@
 from pathlib import Path
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Any
 
 import numpy as np
 import pytorch_lightning as pl
 import torch
+from pytorch_lightning.core.optimizer import LightningOptimizer
 from pytorch_lightning.utilities import grad_norm
 from torch import nn
 from torch.nn import Sequential, Linear, LeakyReLU
 from torch.nn.functional import log_softmax, gumbel_softmax, softmax
+from torch.optim import Optimizer
 from torchmetrics import Recall, Metric
 from torchmetrics.functional.text.cer import char_error_rate
 from torchmetrics.text import CharErrorRate
@@ -21,9 +23,9 @@ import re
 
 class PretrainedGPT2TextInfilling(pl.LightningModule):
     def __init__(self, pretrained_name: str, vocab_size: int, train_context: float,
-                 lr: float, total_steps: int, adaptation_part: int, div_factor: int,
+                 lr: float, total_steps: int, adaptation_part: int, div_factor: int, step_type='classic',
                  end_infill_id=None, target_types_pred=0.0, real_types_match=0.0, num_classes=2,
-                 step_type='classic', sample_temperature=0., maximize_distance=0.0, sameness_penalty=0.0, **kwargs):
+                 sample_temperature=0., maximize_distance=0.0, sameness_penalty=0.0, sameness_threshold=0.01, **kwargs):
         """
         :param pretrained_name: название предобученной GPT2 модели из hugging face hub
         :param vocab_size: итоговый размер словаря (с добавлением или удалением части токенов)
@@ -32,14 +34,15 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         :param total_steps: полное количество шагов обучения: ~ кол-во эпох * размер батча
         :param adaptation_part: доля эпох для обновления весов с низким learning rate
         :param div_factor: максимальный делитель, на который уменьшается learning rate в OneCycle подходе
+        :param step_type: тип шага (classic / rl)
         :param end_infill_id: id end_infill токена для инференса модели
         :param target_types_pred: вес функции потерь для предсказания целевых меток для сгенерированных данных
         :param real_types_match: вес функции потерь для предсказания истинных меток для сгенерированных данных
         :param num_classes: количество типов замаскированных данных, генерируемых моделью (num_classes > max_type_id)
-        :param step_type: тип шага (classic / rl)
         :param sample_temperature: температура для семплирования при использовании RL
         :param maximize_distance: вес награды за дальность сгенерированных данных от оригинальных ответов
         :param sameness_penalty: вес штрафа за одинаковые ответы от модели
+        :param sameness_threshold: порог однообразия, с которого начисляется штраф
         """
         super().__init__()
         self.save_hyperparameters()
@@ -67,6 +70,7 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         self.sample_temperature = sample_temperature
         self.maximize_distance = maximize_distance
         self.sameness_penalty = sameness_penalty
+        self.sameness_threshold = sameness_threshold
         # Additional modules for training
         self.tokenizer: Optional[TextInfillTokenizer] = None
         self.ner_model: Optional[PretrainedBertNER] = None
@@ -175,6 +179,12 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
                                           temperature=self.sample_temperature if self.training else 0.,
                                           fresh_start=True)
         logits = self.forward(torch.maximum(hard_pred[:, :-1], torch.tensor(0)))[0].transpose(1, 2)
+        target_infill = self.tts_to_targets(
+            hard_pred, tts,
+            [TargetType.CONTEXT, TargetType.CONTEXT_SPECIAL, TargetType.CONTEXT_INFILL_SEP], reverse=True
+        )[:, 1: logits.size(2) + 1]
+        # Compute the log probabilities of the current states
+        state_log_prob = self.rl_criterion(logits, target_infill).sum(dim=-1) / (target_infill == -1).sum(dim=-1)
         # Get hard predictions for answer and their types
         answers_starts = (torch.nonzero(tts == TargetType.CONTEXT_INFILL_SEP.value)[:, 1] + 1).tolist()
         masks_num = (tts == TargetType.CONTEXT_SPECIAL.value).sum(dim=-1).tolist()
@@ -205,21 +215,21 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
                 local_cer.append(char_error_rate(gen_answers, orig_answers))
         if self.maximize_distance:
             reward += self.maximize_distance * torch.tensor(local_cer, device=self.device)
+        # if self.sameness_penalty:
+        #     reward -= torch.full_like(reward, self.sameness_penalty).where(
+        #         state_log_prob <= torch.tensor(self.sameness_threshold), 0.
+        #     )
         # Compute loss from reward
-        target_infill = self.tts_to_targets(
-            hard_pred, tts,
-            [TargetType.CONTEXT, TargetType.CONTEXT_SPECIAL, TargetType.CONTEXT_INFILL_SEP], reverse=True
-        )
-        loss = torch.mean(reward * self.rl_criterion(logits, target_infill[:, 1: logits.size(2) + 1]).sum(dim=-1)
-                          / (target_infill[:, 1: logits.size(2) + 1] == -1).sum(dim=-1))
+        loss = torch.mean(reward * state_log_prob)
 
         # Estimate the sameness of generation
+        # entropy = state_log_prob.mean()  # B -> 1
         entropy = -(log_softmax(logits, dim=-2) * softmax(logits, dim=-2)).sum(dim=-2)  # B, C, L -> B, L
-        entropy = entropy.where(target_infill[:, 1: logits.size(2) + 1] != -1, 0.)
-        entropy = entropy.sum(dim=-1) / (target_infill[:, 1: logits.size(2) + 1] == -1).sum(dim=-1)  # B, L -> B
-        entropy = entropy.mean()  # B -> 1
+        entropy = entropy.where(target_infill != -1, 0.)
+        entropy = entropy.sum(dim=-1) / (target_infill == -1).sum(dim=-1)  # B, L -> B
+        entropy = torch.clamp_min(entropy, self.sameness_threshold).mean()  # B -> 1
         if self.sameness_penalty:
-            loss -= self.sameness_penalty * torch.minimum(entropy, torch.tensor(0.01))
+            loss -= self.sameness_penalty * entropy
         return loss, reward.mean(), entropy
 
     def training_step(self, batch, batch_idx):
