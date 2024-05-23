@@ -229,7 +229,7 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         entropy = -(log_softmax(logits, dim=-2) * softmax(logits, dim=-2)).sum(dim=-2)  # B, C, L -> B, L
         entropy = entropy.where(target_infill != -1, 0.)
         entropy = entropy.sum(dim=-1) / (target_infill == -1).sum(dim=-1)  # B, L -> B
-        entropy = torch.clamp_min(entropy, self.sameness_threshold).mean()  # B -> 1
+        entropy = torch.clamp_max(entropy, self.sameness_threshold).mean()  # B -> 1
         if self.sameness_penalty:
             loss -= self.sameness_penalty * entropy
         return loss, reward.mean(), entropy
