@@ -16,20 +16,22 @@ from utils.log_reader import TensorBoardReader
 if __name__ == '__main__':
     set_seed(42)
     # Config initialisation
-    data_config = yaml.load(open("configs/i2b2-2006_data_config.yaml", 'r'), Loader=yaml.Loader)
+    data_config = yaml.load(open("configs/i2b2-2014_data_config.yaml", 'r'), Loader=yaml.Loader)
     model_config = yaml.load(open("configs/bert-large_model_config.yaml", 'r'), Loader=yaml.Loader)
+    data_config["max_token_number"] = model_config.get("max_token_number", data_config["max_token_number"])
+    data_config["pretrained_tokenizer"] = model_config.get("pretrained_tokenizer", data_config["max_token_number"])
     # Data processing
     train_dataset = get_ner_dataset(path_to_folder=data_config["train_data_path"], device='cpu', **data_config)
     val_dataset = get_ner_dataset(path_to_folder=data_config["validate_data_path"], device='cpu', **data_config)
     print(f"Len of train dataset: {len(train_dataset)}\nLen of validation dataset: {len(val_dataset)}")
     train_dataloader = DataLoader(train_dataset, shuffle=True,
-                                  batch_size=data_config["batch_size"],
+                                  batch_size=model_config["batch_size"],
                                   collate_fn=train_dataset.get_collate_fn(),
                                   num_workers=10,
                                   pin_memory=False,
                                   persistent_workers=True)
     val_dataloader = DataLoader(val_dataset, shuffle=False,
-                                batch_size=data_config["batch_size"],
+                                batch_size=model_config["batch_size"],
                                 collate_fn=val_dataset.get_collate_fn(),
                                 num_workers=10,
                                 pin_memory=False,
