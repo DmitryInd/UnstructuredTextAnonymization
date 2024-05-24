@@ -149,16 +149,18 @@ class NERTokenizer(ABC):
         real_types_list = []
         for i, marks in enumerate(mark_up):
             num = 0
+            prev_mark = self.pad_id
             log_prob = None
             for j, mark in enumerate(marks):
-                if mark != self.pad_id:
+                if mark != self.pad_id and (mark == prev_mark or prev_mark == self.pad_id):
                     log_prob = log_prob + log_probs[i, j] if log_prob is not None else log_probs[i, j]
-                elif mark == self.pad_id and log_prob is not None:
+                elif mark != prev_mark and log_prob is not None:
                     real_types_list.append(torch.argmax(log_prob).item())
                     log_prob = None
                     num += 1
                     if labels_number is not None and num >= labels_number[i]:
                         break
+                prev_mark = mark
             if labels_number is not None and labels_number[i] > num:
                 real_types_list.extend([self.pad_id] * (labels_number[i] - num))
         return real_types_list

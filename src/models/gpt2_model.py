@@ -165,7 +165,7 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
             g_types_logits = g_types_logits.transpose(2, 1)  # B, L, C -> B, C, L
             sample_answers = [self.tokenizer.parse_answers(gen, st) for st, gen in zip(answers_starts, generated)]
             num_answers = [len(answers) for answers in sample_answers]
-            pseudo_labels = [[1] * num for num in num_answers]
+            pseudo_labels = [list(range(1, num + 1)) for num in num_answers]
             ner_input, ner_labels = self._prepare_input_for_ner(sample_answers, pseudo_labels)
             with torch.no_grad():
                 log_probs = log_softmax(self.ner_model(ner_input), dim=-1)
@@ -216,10 +216,11 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
             labels.append(target_types_list[cursor:cursor + n])
             cursor += n
         # Get real types of infilled masks
-        context = None
         if self.with_context:
             context = self.tokenizer.parse_context(inputs, tts, answers_starts)
-        ner_input, ner_labels = self._prepare_input_for_ner(sample_answers, labels, context=context)
+            ner_input, ner_labels = self._prepare_input_for_ner(sample_answers, labels, separator=' ', context=context)
+        else:
+            ner_input, ner_labels = self._prepare_input_for_ner(sample_answers, labels)
         with torch.no_grad():
             ner_logits = self.ner_model(ner_input).transpose(1, 2)  # B, L, C -> B, C, L
         # B, C, L -> B, L -> B; (-inf; 0]
@@ -395,9 +396,10 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
             answers = [answer if answer.strip() else '#' for answer in answers]
             if context is not None:
                 cur_context = [self.ner_replace.sub('', seg) for seg in context[i]]
+                cur_context += [separator] * (np.max(len(answers) - len(cur_context), 0))
                 answers = (sum([[cont, answer] for answer, cont in zip(answers, cur_context[:len(answers)])], [])
                            + cur_context[len(answers):])
-                types = sum([[-1, t] for t in types], []) + [-1] * (len(context[i]) - len(types))
+                types = sum([[-1, t] for t in types], []) + [-1] * (len(cur_context) - len(types))
             else:
                 answers = sum([[answer, separator] for answer in answers], [])
                 types = sum([[t, -1] for t in types], [])
