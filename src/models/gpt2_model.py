@@ -61,7 +61,7 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         self.total_steps = total_steps
         self.adaptation_part = adaptation_part
         # Parameters for classic step
-        if isinstance(types_weights, torch.Tensor) and types_weights is not None:
+        if not isinstance(types_weights, torch.Tensor) and types_weights is not None:
             types_weights = torch.tensor(types_weights)
         self.g_criterion = nn.CrossEntropyLoss(reduction='mean', ignore_index=-1)
         self.t_criterion = nn.CrossEntropyLoss(weight=types_weights,
