@@ -84,6 +84,7 @@ class NERTokenizer(ABC):
                     token_id_seg.extend([self.word2index[self.pad_token]] * pad_len)
                     label_id_seg.extend([self.pad_id] * pad_len)
         else:
+            offsets.append(0)
             token_segments.append([self.word2index[self.sos_token]] + token_id_list +
                                   [self.word2index[self.eos_token]])
             label_segments.append([self.pad_id] + label_id_list + [self.pad_id])

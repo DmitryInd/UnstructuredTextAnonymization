@@ -83,7 +83,7 @@ class NerDataset(Dataset, ABC):
                 self.alias2label[variant] = standard
         self.other_label = other_label
         self.pad_label = "[PAD]"
-        self.index2label = list(list(zip(*label_aliases))[0]) + [self.pad_label]
+        self.index2label = list(list(zip(*label_aliases))[0]) + [self.pad_label]  # Pad label is superfluous
         self.label2index = {label: i for i, label in enumerate(self.index2label)}
         # Start of reading files
         self.is_uncased = is_uncased

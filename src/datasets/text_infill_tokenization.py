@@ -111,15 +111,16 @@ class TextInfillTokenizer(ABC):
         return answers_list
 
     def mark_up_types(self, tokenized_input: torch.Tensor,
-                      target_types_list: Optional[Iterable[int]] = None) -> torch.Tensor:
+                      target_types_list: Optional[Iterable[int]] = None, check_types=False) -> torch.Tensor:
         """
-        :param tokenized_input: тензор токенов B x L (Batch, Length)
-        :param target_types_list: последовательный список типов всех пропусков (слева-направо, сверху-вниз);
-                                  если не передан определяется автоматически
-        :return: тензор типов B x L
+        :param tokenized_input: Тензор токенов B x L (Batch, Length).
+        :param target_types_list: Последовательный список типов всех пропусков (слева-направо, сверху-вниз);
+                                  если не передан определяется автоматически.
+        :param check_types: Флаг проверки корректности id типа заполняемых данных.
+                            Если id типа нет среди известных типов масок, то выбирается случайный id из допустимых.
+        :return: Тензор типов B x L.
         """
         assert tokenized_input.dim() == 2, "Input must have 2 dimensions: B, L"
-        valid_types_values = set(x.value for x in self.mask_type_to_id.keys())
         if target_types_list is None:
             selector = torch.zeros_like(tokenized_input, dtype=torch.bool)
             for mask_type_id in self.id_to_mask_type.keys():
@@ -140,8 +141,8 @@ class TextInfillTokenizer(ABC):
                 left = pos
             elif tokenized_input[sample_id, pos] != self.start_infill_id:
                 target_type = target_types_list.__next__()
-                if target_type not in valid_types_values:
-                    target_type = np.random.choice(list(valid_types_values))
+                if check_types and (target_type not in self.mask_type_to_id):
+                    target_type = np.random.choice([x.value for x in self.mask_type_to_id.keys()])
                 target_types[sample_id, left + 1:pos] = target_type
                 left = pos
 

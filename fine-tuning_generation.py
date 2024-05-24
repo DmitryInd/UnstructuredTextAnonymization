@@ -58,7 +58,7 @@ if __name__ == '__main__':
         path_to_checkpoint,
         strict=False,
         total_steps=model_config["epochs"] * len(train_dataloader),
-        num_classes=ner_model.num_classes,
+        num_classes=ner_model.num_classes,  # It was at this moment that I knew... pad label is superfluous
         **model_config
     )
     # Set additional parameters
