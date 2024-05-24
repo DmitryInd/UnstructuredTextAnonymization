@@ -23,7 +23,8 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
     def __init__(self, pretrained_name: str, vocab_size: int, train_context: float,
                  lr: float, total_steps: int, adaptation_part: int, div_factor: int, step_type='classic',
                  types_weights=None, end_infill_id=None, target_types_pred=0.0, real_types_match=0.0, num_classes=2,
-                 sample_temperature=0., maximize_distance=0.0, sameness_penalty=0.0, sameness_threshold=0.01, **kwargs):
+                 sample_temperature=0., with_context=False, maximize_distance=0.0, sameness_penalty=0.0,
+                 sameness_threshold=0.01, **kwargs):
         """
         :param pretrained_name: название предобученной GPT2 модели из hugging face hub
         :param vocab_size: итоговый размер словаря (с добавлением или удалением части токенов)
@@ -39,6 +40,7 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         :param real_types_match: вес функции потерь для предсказания истинных меток для сгенерированных данных
         :param num_classes: количество типов замаскированных данных, генерируемых моделью (num_classes > max_type_id)
         :param sample_temperature: температура для семплирования при использовании RL
+        :param with_context: использовать ли контекст при оценке генерации с помощью NER
         :param maximize_distance: вес награды за дальность сгенерированных данных от оригинальных ответов
         :param sameness_penalty: вес штрафа за одинаковые ответы от модели
         :param sameness_threshold: порог однообразия, с которого начисляется штраф
@@ -77,6 +79,7 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         self.rl_t_criterion = nn.CrossEntropyLoss(weight=types_weights,
                                                   reduction='none', ignore_index=-1)
         self.sample_temperature = sample_temperature
+        self.with_context = with_context
         self.maximize_distance = maximize_distance
         self.sameness_penalty = sameness_penalty
         self.sameness_threshold = sameness_threshold
@@ -213,7 +216,10 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
             labels.append(target_types_list[cursor:cursor + n])
             cursor += n
         # Get real types of infilled masks
-        ner_input, ner_labels = self._prepare_input_for_ner(sample_answers, labels)
+        context = None
+        if self.with_context:
+            context = self.tokenizer.parse_context(inputs, tts, answers_starts)
+        ner_input, ner_labels = self._prepare_input_for_ner(sample_answers, labels, context=context)
         with torch.no_grad():
             ner_logits = self.ner_model(ner_input).transpose(1, 2)  # B, L, C -> B, C, L
         # B, C, L -> B, L -> B; (-inf; 0]
@@ -367,15 +373,16 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
             new_weights = counter / counter.sum()
         return new_weights
 
-    def _prepare_input_for_ner(self, batch_answers: List[List[str]], batch_types: List[List[int]], separator="; ") \
-            -> Tuple[torch.Tensor, torch.Tensor]:
+    def _prepare_input_for_ner(self, batch_answers: List[List[str]], batch_types: List[List[int]], separator="; ",
+                               context: Optional[List[List[str]]] = None) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Важно! Длина ответов с сепараторами не должна быть больше ограничения модели на входные токены
-        (в каждом отдельном примере)
+        Важно! Длина ответов с сепараторами или контекстом не должна быть больше ограничения модели на входные токены
+        (в каждом отдельном примере; примеры, которые длиннее ограничения, будут обрезаны)
 
         :param batch_answers: списки сгенерированных ответов для каждого примера
         :param batch_types: списки типов сгенерированных ответов
         :param separator: разделитель для сгенерированных ответов в одном примере
+        :param context: (опционально) контекст, в который будут помещены ответы ({context[i]}{answers[i]})
         :return: входной тензор B x L' для NER модели, тензор B x L' с разметкой,
                  списки границ сгенерированных ответов для каждого примера
         """
@@ -383,11 +390,17 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         labels_sets = []
         if self.ner_replace is None:
             self.ner_replace = re.compile(fr"[^\s{re.escape(''.join(set(''.join(self.ner_tokenizer.word2index.keys()))))}]")
-        for answers, types in zip(batch_answers, batch_types):
+        for i, (answers, types) in enumerate(zip(batch_answers, batch_types)):
             answers = [self.ner_replace.sub('', answer) for answer in answers]
             answers = [answer if answer.strip() else '#' for answer in answers]
-            answers = sum([[answer, separator] for answer in answers], [])
-            types = sum([[t, -1] for t in types], [])
+            if context is not None:
+                cur_context = [self.ner_replace.sub('', seg) for seg in context[i]]
+                answers = (sum([[cont, answer] for answer, cont in zip(answers, cur_context[:len(answers)])], [])
+                           + cur_context[len(answers):])
+                types = sum([[-1, t] for t in types], []) + [-1] * (len(context[i]) - len(types))
+            else:
+                answers = sum([[answer, separator] for answer in answers], [])
+                types = sum([[t, -1] for t in types], [])
             _, tokens, labels = self.ner_tokenizer(answers or ['#'], types or [-1])
             tokens, labels = tokens[0], labels[0]
             tokenized_answers.append(tokens)

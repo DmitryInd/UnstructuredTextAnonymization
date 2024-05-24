@@ -110,6 +110,39 @@ class TextInfillTokenizer(ABC):
 
         return answers_list
 
+    def parse_context(self, inputs, tts, answers_starts: Optional[List[int]] = None) -> List[List[str]]:
+        """
+        :param inputs: tensor[int] B x L - входные данные для модели
+        :param tts: tensor[int] B x L - разметка входных данных
+        :param answers_starts: len = B - номера токенов, с которых включительно начинается генерация ответов
+        :return: списки декодированных контекстных промежутков для каждого примера
+        """
+        if answers_starts is None:
+            answers_starts = (torch.nonzero(tts == TargetType.CONTEXT_INFILL_SEP.value)[:, 1] + 1).tolist()
+
+        context = []
+        masks_pos = torch.nonzero(tts == TargetType.CONTEXT_SPECIAL.value).tolist() + [(inputs.shape[0], -1)]
+        prev_row = -1
+        prev_pos = 0
+        for row, pos in masks_pos:
+            if prev_row != -1 and prev_row != row and prev_pos != answers_starts[prev_row] - 2:
+                context[-1].append(
+                    self.decode(inputs[prev_row, prev_pos + 1: answers_starts[prev_row] - 1].tolist())
+                )
+                prev_pos = 0
+            context.extend([[]] * (row - prev_row))
+
+            if prev_row != row and pos == 0:
+                context[-1].append('')
+                prev_pos = 0
+
+            prev_row = row
+            if pos != 0 and pos != -1:
+                context[-1].append(self.decode(inputs[row, prev_pos + 1: pos].tolist()))
+                prev_pos = pos
+
+        return context[:-1]
+
     def mark_up_types(self, tokenized_input: torch.Tensor,
                       target_types_list: Optional[Iterable[int]] = None, check_types=False) -> torch.Tensor:
         """
