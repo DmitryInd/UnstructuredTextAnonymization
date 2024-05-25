@@ -12,7 +12,7 @@ self_critical: True
 with_context: True
 maximize_distance: 0.0
 sameness_penalty: 2.0
-sameness_threshold: 0.08
+sameness_threshold: 2.4
 div_factor: 10000
 log_dir: "./gpt2-small"
 model_version: 10
