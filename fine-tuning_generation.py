@@ -20,11 +20,17 @@ from mask.personal_entity import MaskEntityType
 if __name__ == '__main__':
     set_seed(42)
     # Config initialisation
-    train_data_config = yaml.load(open("configs/i2b2-2014_data_config.yaml", 'r'), Loader=yaml.Loader)
-    train_data_config["pretrained_tokenizer"] = "data/tokenizer/official_gpt2_encoder"
-    validate_data_config = yaml.load(open("configs/i2b2-2014_data_config.yaml", 'r'), Loader=yaml.Loader)
-    validate_data_config["pretrained_tokenizer"] = "data/tokenizer/official_gpt2_encoder"
     model_config = yaml.load(open("configs/gpt2_fine-tune_config.yaml", 'r'), Loader=yaml.Loader)
+    train_data_config = yaml.load(open("configs/i2b2-2014_data_config.yaml", 'r'), Loader=yaml.Loader)
+    train_data_config["pretrained_tokenizer"] = model_config.get("pretrained_tokenizer",
+                                                                 train_data_config["pretrained_tokenizer"])
+    train_data_config["max_full_ex_len"] = model_config.get("max_full_ex_len",
+                                                             train_data_config["max_full_ex_len"])
+    validate_data_config = yaml.load(open("configs/i2b2-2014_data_config.yaml", 'r'), Loader=yaml.Loader)
+    validate_data_config["pretrained_tokenizer"] = model_config.get("pretrained_tokenizer",
+                                                                    validate_data_config["pretrained_tokenizer"])
+    validate_data_config["max_full_ex_len"] = model_config.get("max_full_ex_len",
+                                                               validate_data_config["max_full_ex_len"])
     ner_model_config = yaml.load(open("configs/bert-large_model_config.yaml", 'r'), Loader=yaml.Loader)
     # Data processing
     train_dataset = get_text_infill_dataset(split="train", path_to_data=train_data_config["train_data_path"],

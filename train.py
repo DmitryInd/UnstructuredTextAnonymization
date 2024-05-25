@@ -18,8 +18,8 @@ if __name__ == '__main__':
     # Config initialisation
     data_config = yaml.load(open("configs/i2b2-2014_data_config.yaml", 'r'), Loader=yaml.Loader)
     model_config = yaml.load(open("configs/bert-large_model_config.yaml", 'r'), Loader=yaml.Loader)
+    data_config["pretrained_tokenizer"] = model_config.get("pretrained_tokenizer", data_config["pretrained_tokenizer"])
     data_config["max_token_number"] = model_config.get("max_token_number", data_config["max_token_number"])
-    data_config["pretrained_tokenizer"] = model_config.get("pretrained_tokenizer", data_config["max_token_number"])
     # Data processing
     train_dataset = get_ner_dataset(path_to_folder=data_config["train_data_path"], device='cpu', **data_config)
     val_dataset = get_ner_dataset(path_to_folder=data_config["validate_data_path"], device='cpu', **data_config)

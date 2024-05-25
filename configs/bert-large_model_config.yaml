@@ -5,6 +5,6 @@ adaptation_epochs: 5
 div_factor: 10000
 log_dir: "./bert-large"
 # For input data
-max_token_number: 256
-batch_size: 32
 pretrained_tokenizer: *global_name
+max_token_number: 256 # 100 #
+batch_size: 32
