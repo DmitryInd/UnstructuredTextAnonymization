@@ -7,10 +7,9 @@ from pytorch_lightning.callbacks import ModelCheckpoint, early_stopping
 from torch.utils.data import DataLoader
 from transformers import set_seed
 
-from datasets.ner_tokenization import WordPieceNERTokenizer
-
 sys.path.insert(1, "./src")
 from datasets.text_infill_dataset import get_text_infill_dataset
+from datasets.ner_tokenization import WordPieceNERTokenizer
 from models.gpt2_model import PretrainedGPT2TextInfilling
 from models.bert_model import PretrainedBertNER
 from utils.log_reader import TensorBoardReader

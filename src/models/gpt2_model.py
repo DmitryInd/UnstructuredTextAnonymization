@@ -187,7 +187,7 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
                            self.tokenizer.parse_answers(orig, answers_start))
         return loss
 
-    def rl_policy_gradient_step(self, inputs: torch.Tensor, tts: torch.Tensor, cer: CharErrorRate) \
+    def rl_policy_gradient_step(self, inputs: torch.Tensor, tts: torch.Tensor, cer: CharErrorRate, validate=False) \
             -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         assert self.tokenizer is not None and self.ner_tokenizer is not None and self.ner_model is not None
         assert self.ner_tokenizer.pad_id == -1, "Pad id for NER tokenizer must be -1"
@@ -197,7 +197,7 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
             predictions, _ = self.inference(inputs, tts,
                                             temperature=self.sample_temperature if self.training else 0.,
                                             fresh_start=True)
-        if self.self_critical:
+        if self.self_critical and not validate:
             with torch.no_grad():
                 greedy_pred, _ = self.inference(inputs, tts, fresh_start=True)
         logits = self.forward(torch.maximum(predictions[:, :-1], torch.tensor(0)))[0].transpose(1, 2)
@@ -218,12 +218,12 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
             cer.update(gen_answers, orig_answers)
             if self.maximize_distance:
                 local_cer.append(char_error_rate(gen_answers, orig_answers).item())
-            if self.maximize_distance and self.self_critical:
+            if self.maximize_distance and self.self_critical and not validate:
                 greedy_answers = self.tokenizer.parse_answers(greedy_pred[i], answers_starts[i], answers_numbers[i])
                 greedy_cer.append(char_error_rate(greedy_answers, orig_answers).item())
         # Compute reward
         reward = self._compute_reward(predictions, tts, local_cer)
-        if self.self_critical:
+        if self.self_critical and not validate:
             reward -= self._compute_reward(greedy_pred, tts, greedy_cer)
         # Compute loss from reward
         loss = torch.mean(reward * state_log_prob)
@@ -298,7 +298,7 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
             self.log('val_real_type_recall', self.val_real_type_recall, on_step=False, on_epoch=True,
                      logger=True, prog_bar=True)
         elif self.step_type == 'rl':
-            loss, reward, entropy = self.rl_policy_gradient_step(inputs, tts, self.val_cer)
+            loss, reward, entropy = self.rl_policy_gradient_step(inputs, tts, self.val_cer, True)
             self.log('val_reward', reward.item(), on_step=False, on_epoch=True, logger=True, prog_bar=True)
             self.log('val_entropy', entropy.item(), on_step=False, on_epoch=True, logger=True, prog_bar=True)
         else:

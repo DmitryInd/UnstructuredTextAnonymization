@@ -12,10 +12,10 @@ self_critical: True
 with_context: True
 maximize_distance: 0.0
 sameness_penalty: 2.0
-sameness_threshold: 2.4
+sameness_threshold: 2.2
 div_factor: 10000
 log_dir: "./gpt2-small"
-model_version: 10
+model_version: 12
 ner_model_version: 11 # 7 # 11 # 10 #
 # For input data
 pretrained_tokenizer: "data/tokenizer/official_gpt2_encoder"
