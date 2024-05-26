@@ -6,5 +6,5 @@ div_factor: 10000
 log_dir: "./bert-large"
 # For input data
 pretrained_tokenizer: *global_name
-max_token_number: 256 # 100 #
+max_token_number: 100 # 100 # 256 #
 batch_size: 32

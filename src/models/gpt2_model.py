@@ -72,7 +72,9 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         self.g_criterion = nn.CrossEntropyLoss(reduction='mean', ignore_index=-1)
         self.t_criterion = nn.CrossEntropyLoss(weight=types_weights, reduction='mean', ignore_index=-1)
         self.gt_criterion = nn.CrossEntropyLoss(reduction='mean', ignore_index=-1)
-        self.gt_term_freq = torch.zeros((num_classes,), dtype=torch.float) if types_weights is not None else None
+        self.gt_term_freq = None
+        if types_weights is not None:
+            self.gt_term_freq = torch.ones((num_classes,), dtype=torch.float) / num_classes
         self.gt_alpha = 0.9
         self.train_context = train_context
         self.target_types_pred = target_types_pred
@@ -87,7 +89,7 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         self.repetition_penalty = repetition_penalty
         self.repetition_threshold = repetition_threshold
         self.type_gen_tf = [None for _ in range(num_classes)]
-        self.type_gen_alpha = 0.95
+        self.type_gen_alpha = 0.98
         self.sameness_penalty = sameness_penalty
         self.sameness_threshold = sameness_threshold
         # Additional modules for training
@@ -181,7 +183,7 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
             real_types = self.tokenizer.mark_up_types(generated, real_types_list)[:, :-1]
             if self.gt_term_freq is not None and self.training:
                 self.gt_term_freq = self._term_freq_update(real_types, self.gt_term_freq, self.gt_alpha)
-                self.gt_criterion.weight = normalize(1 / (self.gt_term_freq + 0.1), p=1, dim=0)
+                self.gt_criterion.weight = normalize(1 / (self.gt_term_freq + 0.01), p=1, dim=0)
             loss += self.real_types_match * self.gt_criterion(g_types_logits, real_types)
             real_type_recall.update(torch.argmax(g_types_logits, dim=-2), real_types)
         # Compute cer statistics
@@ -192,7 +194,7 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
                            self.tokenizer.parse_answers(orig, answers_start))
         return loss
 
-    def rl_policy_gradient_step(self, inputs: torch.Tensor, tts: torch.Tensor, cer: CharErrorRate, validate=False) \
+    def rl_policy_gradient_step(self, inputs: torch.Tensor, tts: torch.Tensor, cer: CharErrorRate) \
             -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         assert self.tokenizer is not None and self.ner_tokenizer is not None and self.ner_model is not None
         assert self.ner_tokenizer.pad_id == -1, "Pad id for NER tokenizer must be -1"
@@ -202,7 +204,7 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
             predictions, _ = self.inference(inputs, tts,
                                             temperature=self.sample_temperature if self.training else 0.,
                                             fresh_start=True)
-        if self.self_critical and not validate:
+        if self.self_critical and self.training:
             with torch.no_grad():
                 greedy_pred, _ = self.inference(inputs, tts, fresh_start=True)
         logits = self.forward(torch.maximum(predictions[:, :-1], torch.tensor(0)))[0].transpose(1, 2)
@@ -223,15 +225,16 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
             cer.update(gen_answers, orig_answers)
             if self.maximize_distance:
                 local_cer.append(char_error_rate(gen_answers, orig_answers).item())
-            if self.maximize_distance and self.self_critical and not validate:
+            if self.maximize_distance and self.self_critical and self.training:
                 greedy_answers = self.tokenizer.parse_answers(greedy_pred[i], answers_starts[i], answers_numbers[i])
                 greedy_cer.append(char_error_rate(greedy_answers, orig_answers).item())
         # Compute reward
         reward = self._compute_reward(predictions, tts, local_cer)
-        if self.self_critical and not validate:
-            reward -= self._compute_reward(greedy_pred, tts, greedy_cer)
+        bias_reward = 0.
+        if self.self_critical and self.training:
+            bias_reward = self._compute_reward(greedy_pred, tts, greedy_cer)
         # Compute loss from reward
-        loss = torch.mean(reward * state_log_prob)
+        loss = torch.mean(state_log_prob * (reward - bias_reward))
         # Estimate the sameness of generation
         # entropy = state_log_prob.mean()  # B -> 1
         entropy = -(log_softmax(logits, dim=-2) * softmax(logits, dim=-2)).sum(dim=-2)  # B, C, L -> B, L
@@ -269,8 +272,8 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
             reward += self.with_context * -self.rl_t_criterion(ner_logits, ner_labels).sum(dim=-1) / (ner_labels != -1).sum(dim=-1)
         if self.repetition_penalty:
             if self.type_gen_tf[0] is None:
-                self.type_gen_tf = [torch.zeros((self.tokenizer.vocab_size,), dtype=torch.int8, device=self.device)
-                                    for _ in self.type_gen_tf]
+                self.type_gen_tf = [torch.ones((self.tokenizer.vocab_size,), device=self.device)
+                                    / self.tokenizer.vocab_size for _ in self.type_gen_tf]
             num_answers = (predictions == self.tokenizer.end_infill_id).sum(dim=-1).tolist()
             aligned_target_types_list = sum([labs[:num] + [-1] * np.clip(num - len(labs), 0, None)
                                              for labs, num in zip(labels, num_answers)], [])
@@ -323,7 +326,7 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
             self.log('val_real_type_recall', self.val_real_type_recall, on_step=False, on_epoch=True,
                      logger=True, prog_bar=True)
         elif self.step_type == 'rl':
-            loss, reward, entropy = self.rl_policy_gradient_step(inputs, tts, self.val_cer, True)
+            loss, reward, entropy = self.rl_policy_gradient_step(inputs, tts, self.val_cer)
             self.log('val_reward', reward.item(), on_step=False, on_epoch=True, logger=True, prog_bar=True)
             self.log('val_entropy', entropy.item(), on_step=False, on_epoch=True, logger=True, prog_bar=True)
         else:
@@ -408,8 +411,7 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
             minlength=len(old_term_freq)
         )[:len(old_term_freq)]
         new_term_freq = counter / counter.sum().clamp_min(1)
-        if self.global_step:
-            new_term_freq = alpha * old_term_freq.to(self.device) + (1 - alpha) * new_term_freq
+        new_term_freq = alpha * old_term_freq.to(self.device) + (1 - alpha) * new_term_freq
         return new_term_freq
 
     def _prepare_input_for_ner(self, batch_answers: List[List[str]], batch_types: List[List[int]], separator="; ",

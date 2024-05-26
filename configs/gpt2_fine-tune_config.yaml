@@ -1,24 +1,24 @@
 pretrained_name: &global_name "gpt2"
-lr: 0.000003 # 0.000003 # 0.0001 # 0.0003
+lr: 0.00001 # 0.000003 # 0.0001 # 0.0003
 epochs: 20
 adaptation_part: 0.25
 step_type: "rl"
 train_context: 0.
-target_types_pred: 2.1
-real_types_match: 2.1
+target_types_pred: 2.1 # 2.1 # 1.0
+real_types_match: 2.1 # 2.1 # 1.0
 types_weights: null # [0.005988, 0.633999, 0.031310, 0.267605, 0.005428, 0.027095, 0.028574, 0., 0.] #
 sample_temperature: 2.0
 self_critical: True
 with_context: 0.0 # 0.5 #
 maximize_distance: 0.0
-repetition_penalty: 100.0
+repetition_penalty: 30.0
 repetition_threshold: 0.02
 sameness_penalty: 2.0
 sameness_threshold: 2.2
 div_factor: 10000
 log_dir: "./gpt2-small"
 model_version: 10
-ner_model_version: 11 # 7 # 11 # 10 #
+ner_model_version: 7 # 7 # 11 # 10 #
 # For input data
 pretrained_tokenizer: "data/tokenizer/official_gpt2_encoder"
 max_full_ex_len: 128
