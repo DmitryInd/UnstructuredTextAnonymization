@@ -8,7 +8,7 @@ import torch
 from pytorch_lightning.utilities import grad_norm
 from torch import nn
 from torch.nn import Sequential, Linear, LeakyReLU
-from torch.nn.functional import log_softmax, gumbel_softmax, softmax, normalize
+from torch.nn.functional import log_softmax, gumbel_softmax, softmax, normalize, one_hot
 from torchmetrics import Recall, Metric
 from torchmetrics.functional.text.cer import char_error_rate
 from torchmetrics.text import CharErrorRate
@@ -24,7 +24,8 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
                  lr: float, total_steps: int, adaptation_part: int, div_factor: int, step_type='classic',
                  types_weights=None, end_infill_id=None, target_types_pred=0.0, real_types_match=0.0, num_classes=2,
                  sample_temperature=0., self_critical=False, with_context=False, maximize_distance=0.0,
-                 sameness_penalty=0.0, sameness_threshold=0.01, **kwargs):
+                 repetition_penalty=0.0, repetition_threshold=0.02, sameness_penalty=0.0, sameness_threshold=0.01,
+                 **kwargs):
         """
         :param pretrained_name: название предобученной GPT2 модели из hugging face hub
         :param vocab_size: итоговый размер словаря (с добавлением или удалением части токенов)
@@ -43,8 +44,10 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         :param self_critical: использовать ли подход Self-critical Sequence Training для bias
         :param with_context: использовать ли контекст при оценке генерации с помощью NER
         :param maximize_distance: вес награды за дальность сгенерированных данных от оригинальных ответов
-        :param sameness_penalty: вес штрафа за одинаковые ответы от модели
-        :param sameness_threshold: порог однообразия, с которого начисляется штраф
+        :param repetition_penalty: вес штрафа за сгенерированные моделью одинаковые токены
+        :param repetition_threshold: порог частоты токенов [0; 1], с которого начисляется штраф
+        :param sameness_penalty: вес штрафа за низкую энтропию (Шеннона) распределения токенов от модели
+        :param sameness_threshold: порог энтропии Шеннона, с которого начисляется штраф
         """
         super().__init__()
         self.save_hyperparameters()
@@ -67,22 +70,24 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         if not isinstance(types_weights, torch.Tensor) and types_weights is not None:
             types_weights = torch.tensor(types_weights)
         self.g_criterion = nn.CrossEntropyLoss(reduction='mean', ignore_index=-1)
-        self.t_criterion = nn.CrossEntropyLoss(weight=types_weights,
-                                               reduction='mean', ignore_index=-1)
+        self.t_criterion = nn.CrossEntropyLoss(weight=types_weights, reduction='mean', ignore_index=-1)
         self.gt_criterion = nn.CrossEntropyLoss(reduction='mean', ignore_index=-1)
-        self.gt_counter = torch.zeros((num_classes, ), dtype=torch.int) if types_weights is not None else None
+        self.gt_term_freq = torch.zeros((num_classes,), dtype=torch.float) if types_weights is not None else None
         self.gt_alpha = 0.9
         self.train_context = train_context
         self.target_types_pred = target_types_pred
         self.real_types_match = real_types_match
         # Parameters for RL
         self.rl_g_criterion = nn.CrossEntropyLoss(reduction='none', ignore_index=-1)
-        self.rl_t_criterion = nn.CrossEntropyLoss(weight=types_weights,
-                                                  reduction='none', ignore_index=-1)
+        self.rl_t_criterion = nn.CrossEntropyLoss(weight=types_weights, reduction='none', ignore_index=-1)
         self.sample_temperature = sample_temperature
         self.self_critical = self_critical
         self.with_context = with_context
         self.maximize_distance = maximize_distance
+        self.repetition_penalty = repetition_penalty
+        self.repetition_threshold = repetition_threshold
+        self.type_gen_tf = [None for _ in range(num_classes)]
+        self.type_gen_alpha = 0.95
         self.sameness_penalty = sameness_penalty
         self.sameness_threshold = sameness_threshold
         # Additional modules for training
@@ -174,9 +179,9 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
             real_types_list = self.ner_tokenizer.parse_labels_from_marked_up_log_probs(log_probs, ner_labels,
                                                                                        num_answers)
             real_types = self.tokenizer.mark_up_types(generated, real_types_list)[:, :-1]
-            if self.gt_counter is not None:
-                self.gt_counter = self._counter_update(inputs, real_types, self.gt_counter, self.gt_alpha)
-                self.gt_criterion.weight = normalize(1 / self.gt_counter, p=1, dim=0)
+            if self.gt_term_freq is not None and self.training:
+                self.gt_term_freq = self._term_freq_update(real_types, self.gt_term_freq, self.gt_alpha)
+                self.gt_criterion.weight = normalize(1 / (self.gt_term_freq + 0.1), p=1, dim=0)
             loss += self.real_types_match * self.gt_criterion(g_types_logits, real_types)
             real_type_recall.update(torch.argmax(g_types_logits, dim=-2), real_types)
         # Compute cer statistics
@@ -231,7 +236,7 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         # entropy = state_log_prob.mean()  # B -> 1
         entropy = -(log_softmax(logits, dim=-2) * softmax(logits, dim=-2)).sum(dim=-2)  # B, C, L -> B, L
         entropy = entropy.where(target_infill != -1, 0.).sum(dim=-1) / (target_infill != -1).sum(dim=-1)  # B, L -> B
-        entropy = torch.clamp_max(entropy, self.sameness_threshold).mean()  # B -> 1
+        entropy = torch.clamp_max(entropy - self.sameness_threshold, 0.).mean()  # B -> 1
         if self.sameness_penalty:
             loss -= self.sameness_penalty * entropy
         return loss, reward.mean(), entropy
@@ -243,23 +248,43 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         sample_answers = [self.tokenizer.parse_answers(gen, st, n)
                           for st, n, gen in zip(answers_starts, masks_num, predictions)]
         # Get target types of infilled masks
-        labels = []
         target_types_list = predictions[tts == TargetType.CONTEXT_SPECIAL.value].cpu()
         target_types_list = np.vectorize(lambda x: self.tokenizer.id_to_mask_type[x].value)(target_types_list).tolist()
+        labels = []
         cursor = 0
         for n in masks_num:
             labels.append(target_types_list[cursor:cursor + n])
             cursor += n
         # Get real types of infilled masks
-        if self.with_context:
-            context = self.tokenizer.parse_context(predictions, tts, answers_starts)
-            ner_input, ner_labels = self._prepare_input_for_ner(sample_answers, labels, separator=' ', context=context)
-        else:
-            ner_input, ner_labels = self._prepare_input_for_ner(sample_answers, labels)
+        ner_input, ner_labels = self._prepare_input_for_ner(sample_answers, labels)
         with torch.no_grad():
             ner_logits = self.ner_model(ner_input).transpose(1, 2)  # B, L, C -> B, C, L
         # B, C, L -> B, L -> B; (-inf; 0]
         reward = -self.rl_t_criterion(ner_logits, ner_labels).sum(dim=-1) / (ner_labels != -1).sum(dim=-1)
+        if self.with_context:
+            context = self.tokenizer.parse_context(predictions, tts, answers_starts)
+            ner_input, ner_labels = self._prepare_input_for_ner(sample_answers, labels, separator=' ', context=context)
+            with torch.no_grad():
+                ner_logits = self.ner_model(ner_input).transpose(1, 2)  # B, L, C -> B, C, L
+            reward += self.with_context * -self.rl_t_criterion(ner_logits, ner_labels).sum(dim=-1) / (ner_labels != -1).sum(dim=-1)
+        if self.repetition_penalty:
+            if self.type_gen_tf[0] is None:
+                self.type_gen_tf = [torch.zeros((self.tokenizer.vocab_size,), dtype=torch.int8, device=self.device)
+                                    for _ in self.type_gen_tf]
+            num_answers = (predictions == self.tokenizer.end_infill_id).sum(dim=-1).tolist()
+            aligned_target_types_list = sum([labs[:num] + [-1] * np.clip(num - len(labs), 0, None)
+                                             for labs, num in zip(labels, num_answers)], [])
+            target_types = self.tokenizer.mark_up_types(predictions, aligned_target_types_list)
+            one_hot_pred = one_hot(predictions.clamp_min(0), self.tokenizer.vocab_size)
+            for i, tf in enumerate(self.type_gen_tf):
+                type_predictions = predictions.where(target_types == i, -1)
+                if self.training:
+                    self.type_gen_tf[i] = self._term_freq_update(type_predictions, tf, self.type_gen_alpha)
+                penalty = (one_hot_pred * (self.type_gen_tf[i] - self.repetition_threshold).clamp_min(0)).sum(dim=-1)
+                penalty = (penalty.where(target_types == i, 0).sum(dim=-1)
+                           / (type_predictions != -1).sum(dim=-1).clamp_min(1))
+                reward -= self.repetition_penalty * penalty
+
         if self.maximize_distance:
             reward += self.maximize_distance * torch.tensor(local_cer, device=self.device)
         # if self.sameness_penalty:
@@ -377,14 +402,15 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
                 hard_pred[i, :start - 1] = inputs[i, 1:start]
         return hard_pred
 
-    def _counter_update(self, types, batch_size, old_counter, alpha):
+    def _term_freq_update(self, to_count: torch.Tensor, old_term_freq: torch.Tensor, alpha: float) -> torch.Tensor:
         counter = torch.bincount(
-            types.where(types >= 0, torch.tensor(len(old_counter))).flatten(),
-            minlength=len(old_counter)
-        )[:len(old_counter)] + batch_size / 8
+            to_count.where(to_count >= 0, torch.tensor(len(old_term_freq))).flatten(),
+            minlength=len(old_term_freq)
+        )[:len(old_term_freq)]
+        new_term_freq = counter / counter.sum().clamp_min(1)
         if self.global_step:
-            counter = alpha * old_counter.to(self.device) + (1 - alpha) * counter
-        return counter
+            new_term_freq = alpha * old_term_freq.to(self.device) + (1 - alpha) * new_term_freq
+        return new_term_freq
 
     def _prepare_input_for_ner(self, batch_answers: List[List[str]], batch_types: List[List[int]], separator="; ",
                                context: Optional[List[List[str]]] = None) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -408,7 +434,7 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
             answers = [answer if answer.strip() else '#' for answer in answers]
             if context is not None:
                 cur_context = [self.ner_replace.sub('', seg) for seg in context[i]]
-                cur_context += [separator] * (np.max(len(answers) - len(cur_context), 0))
+                cur_context += [separator] * np.clip(len(answers) - len(cur_context), 0, None)
                 answers = (sum([[cont, answer] for answer, cont in zip(answers, cur_context[:len(answers)])], [])
                            + cur_context[len(answers):])
                 types = sum([[-1, t] for t in types], []) + [-1] * (len(cur_context) - len(types))

@@ -165,7 +165,7 @@ class TextInfillTokenizer(ABC):
         target_types = torch.full_like(tokenized_input, -1)
         infill_borders = (tokenized_input == self.start_infill_id) | (tokenized_input == self.end_infill_id)
         infill_borders = torch.nonzero(infill_borders).tolist()
-        prev_row, left = 0, -1
+        prev_row, left = -1, -1
         for sample_id, pos in infill_borders:
             if sample_id != prev_row:
                 assert tokenized_input[sample_id, pos] == self.start_infill_id, \
