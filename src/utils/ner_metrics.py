@@ -29,6 +29,7 @@ class Statistics:
 
     @torch.no_grad()
     def _compute_true_and_predicted_labels(self) -> Tuple[List[int], List[int], List[int]]:
+        # TODO переделать с использованием decode_record
         record_ids = []
         predictions = []
         true_labels = []

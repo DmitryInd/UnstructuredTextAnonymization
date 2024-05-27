@@ -67,6 +67,7 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         self.total_steps = total_steps
         self.adaptation_part = adaptation_part
         # Parameters for classic step
+        # TODO Переделать механику весов для классического шага (один вес на весь loss)
         if not isinstance(types_weights, torch.Tensor) and types_weights is not None:
             types_weights = torch.tensor(types_weights)
         self.g_criterion = nn.CrossEntropyLoss(reduction='mean', ignore_index=-1)
@@ -183,7 +184,7 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
             real_types = self.tokenizer.mark_up_types(generated, real_types_list)[:, :-1]
             if self.gt_term_freq is not None and self.training:
                 self.gt_term_freq = self._term_freq_update(real_types, self.gt_term_freq, self.gt_alpha)
-                self.gt_criterion.weight = normalize(1 / (self.gt_term_freq + 0.01), p=1, dim=0)
+                self.gt_criterion.weight = 1 / (self.gt_term_freq + 0.01)
             loss += self.real_types_match * self.gt_criterion(g_types_logits, real_types)
             real_type_recall.update(torch.argmax(g_types_logits, dim=-2), real_types)
         # Compute cer statistics
@@ -286,7 +287,8 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
                 penalty = (one_hot_pred * (self.type_gen_tf[i] - self.repetition_threshold).clamp_min(0)).sum(dim=-1)
                 penalty = (penalty.where(target_types == i, 0).sum(dim=-1)
                            / (type_predictions != -1).sum(dim=-1).clamp_min(1))
-                reward -= self.repetition_penalty * penalty
+                type_weight = 1 if self.rl_t_criterion.weight is None else self.rl_t_criterion.weight[i]
+                reward -= self.repetition_penalty * type_weight * penalty
 
         if self.maximize_distance:
             reward += self.maximize_distance * torch.tensor(local_cer, device=self.device)

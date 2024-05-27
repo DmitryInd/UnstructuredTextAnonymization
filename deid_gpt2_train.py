@@ -20,8 +20,10 @@ if __name__ == '__main__':
     set_seed(42)
     # Config initialisation
     anon_config = yaml.load(open("configs/gpt2_anonymization_config.yaml", 'r'), Loader=yaml.Loader)
-    data_config = yaml.load(open("configs/i2b2-2014_data_config.yaml", 'r'), Loader=yaml.Loader)
     model_config = yaml.load(open("configs/bert-large_model_config.yaml", 'r'), Loader=yaml.Loader)
+    data_config = yaml.load(open("configs/i2b2-2014_data_config.yaml", 'r'), Loader=yaml.Loader)
+    data_config["pretrained_tokenizer"] = model_config.get("pretrained_tokenizer", data_config["pretrained_tokenizer"])
+    data_config["max_token_number"] = model_config.get("max_token_number", data_config["max_token_number"])
     # Data processing
     model_reader = TensorBoardReader(Path(anon_config["log_dir"]) / Path("lightning_logs"))
     path_to_checkpoint = model_reader.get_ckpt_path(anon_config["model_version"])

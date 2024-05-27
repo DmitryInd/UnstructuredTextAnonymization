@@ -15,7 +15,7 @@ class GPT2GenerationAnonymization(Anonymization):
     def __init__(self, model: PretrainedGPT2TextInfilling, path_to_cashed_data='./data/token/cashed_for_gpt2_anon',
                  other_label='O', is_uncased=False, label2type=None, mask_types: Optional[List[Enum]] = None,
                  pretrained_tokenizer: str = None, max_full_ex_len=256, max_only_context_len=192, overlap=32,
-                 eq_max_padding=True, device: str = "cuda:0", **kwargs):
+                 eq_max_padding=True, gen_model_batch_size=24, device: str = "cuda:0", **kwargs):
         super().__init__(other_label)
         self.model = model
         self.path_to_cashed_data = path_to_cashed_data
@@ -27,6 +27,7 @@ class GPT2GenerationAnonymization(Anonymization):
         self.max_only_context_len = max_only_context_len
         self.overlap = overlap
         self.eq_max_padding = eq_max_padding
+        self.gen_model_batch_size = gen_model_batch_size
         self.device = device
 
     def _get_substitutions(self, general_category_list: List[List[str]], specific_category_list: List[List[str]],
@@ -42,7 +43,7 @@ class GPT2GenerationAnonymization(Anonymization):
         )
         dataloader = DataLoader(
             dataset,
-            batch_size=24,
+            batch_size=self.gen_model_batch_size,
             shuffle=False
         )
 
