@@ -106,6 +106,8 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         self.val_target_type_recall = Recall(task="multiclass", num_classes=num_classes, ignore_index=-1)
         self.train_real_type_recall = Recall(task="multiclass", num_classes=num_classes, ignore_index=-1)
         self.val_real_type_recall = Recall(task="multiclass", num_classes=num_classes, ignore_index=-1)
+        self.train_ner_recall = Recall(task="multiclass", num_classes=num_classes, ignore_index=-1)
+        self.val_ner_recall = Recall(task="multiclass", num_classes=num_classes, ignore_index=-1)
 
     def forward(self, x, gen_types=False, **kwargs):
         gen_types = gen_types and self.type_head is not None
@@ -140,8 +142,8 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         )
         return [optimizer], [scheduler]
 
-    def classic_step(self, inputs: torch.Tensor, tts: torch.Tensor,
-                     target_type_recall: Metric, real_type_recall: Metric, cer: CharErrorRate) -> torch.Tensor:
+    def classic_step(self, inputs: torch.Tensor, tts: torch.Tensor, cer: CharErrorRate,
+                     target_type_recall: Metric, real_type_recall: Metric) -> torch.Tensor:
         target_context = self.tts_to_targets(inputs, tts, [TargetType.CONTEXT])
         target_infill = self.tts_to_targets(inputs, tts, [TargetType.INFILL, TargetType.INFILL_SPECIAL])
         logits, types_logits = self.forward(inputs[:, :-1], gen_types=self.target_types_pred > 0.)
@@ -195,7 +197,7 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
                            self.tokenizer.parse_answers(orig, answers_start))
         return loss
 
-    def rl_policy_gradient_step(self, inputs: torch.Tensor, tts: torch.Tensor, cer: CharErrorRate) \
+    def rl_policy_gradient_step(self, inputs: torch.Tensor, tts: torch.Tensor, cer: CharErrorRate, ner_recall: Metric) \
             -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         assert self.tokenizer is not None and self.ner_tokenizer is not None and self.ner_model is not None
         assert self.ner_tokenizer.pad_id == -1, "Pad id for NER tokenizer must be -1"
@@ -230,7 +232,7 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
                 greedy_answers = self.tokenizer.parse_answers(greedy_pred[i], answers_starts[i], answers_numbers[i])
                 greedy_cer.append(char_error_rate(greedy_answers, orig_answers).item())
         # Compute reward
-        reward = self._compute_reward(predictions, tts, local_cer)
+        reward = self._compute_reward(predictions, tts, local_cer, ner_recall)
         bias_reward = 0.
         if self.self_critical and self.training:
             bias_reward = self._compute_reward(greedy_pred, tts, greedy_cer)
@@ -245,7 +247,8 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
             loss -= self.sameness_penalty * entropy
         return loss, reward.mean(), entropy
 
-    def _compute_reward(self, predictions: torch.Tensor, tts: torch.Tensor, local_cer: Optional[List[int]] = None):
+    def _compute_reward(self, predictions: torch.Tensor, tts: torch.Tensor, local_cer: Optional[List[int]] = None,
+                        ner_recall: Optional[Metric] = None):
         # Get hard predictions for answer and their types
         answers_starts = (torch.nonzero(tts == TargetType.CONTEXT_INFILL_SEP.value)[:, 1] + 1).tolist()
         masks_num = (tts == TargetType.CONTEXT_SPECIAL.value).sum(dim=-1).tolist()
@@ -265,6 +268,8 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
             ner_logits = self.ner_model(ner_input).transpose(1, 2)  # B, L, C -> B, C, L
         # B, C, L -> B, L -> B; (-inf; 0]
         reward = -self.rl_t_criterion(ner_logits, ner_labels).sum(dim=-1) / (ner_labels != -1).sum(dim=-1)
+        if ner_recall is not None:
+            ner_recall.update(torch.argmax(ner_logits, dim=-2), ner_labels)
         if self.with_context:
             context = self.tokenizer.parse_context(predictions, tts, answers_starts)
             ner_input, ner_labels = self._prepare_input_for_ner(sample_answers, labels, separator=' ', context=context)
@@ -300,16 +305,18 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         _, inputs, tts = batch  # B, L
         if self.step_type == 'classic':
-            loss = self.classic_step(inputs, tts,
-                                     self.train_target_type_recall, self.train_real_type_recall, self.train_cer)
+            loss = self.classic_step(inputs, tts, self.train_cer,
+                                     self.train_target_type_recall, self.train_real_type_recall)
             self.log('train_target_type_recall', self.train_target_type_recall, on_step=False, on_epoch=True,
                      logger=True, prog_bar=True)
             self.log('train_real_type_recall', self.train_real_type_recall, on_step=False, on_epoch=True,
                      logger=True, prog_bar=True)
         elif self.step_type == 'rl':
-            loss, reward, entropy = self.rl_policy_gradient_step(inputs, tts, self.train_cer)
+            loss, reward, entropy = self.rl_policy_gradient_step(inputs, tts, self.train_cer, self.train_ner_recall)
             self.log('train_reward', reward.item(), on_step=False, on_epoch=True, logger=True, prog_bar=True)
             self.log('train_entropy', entropy.item(), on_step=False, on_epoch=True, logger=True, prog_bar=True)
+            self.log('train_ner_recall', self.train_ner_recall, on_step=False, on_epoch=True,
+                     logger=True, prog_bar=True)
         else:
             raise ValueError(f'Unrecognized step_type: {self.step_type}')
 
@@ -321,16 +328,17 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         _, inputs, tts = batch  # B, L
         if self.step_type == 'classic':
-            loss = self.classic_step(inputs, tts,
-                                     self.val_target_type_recall, self.val_real_type_recall, self.val_cer)
+            loss = self.classic_step(inputs, tts, self.val_cer,
+                                     self.val_target_type_recall, self.val_real_type_recall)
             self.log('val_target_type_recall', self.val_target_type_recall, on_step=False, on_epoch=True,
                      logger=True, prog_bar=True)
             self.log('val_real_type_recall', self.val_real_type_recall, on_step=False, on_epoch=True,
                      logger=True, prog_bar=True)
         elif self.step_type == 'rl':
-            loss, reward, entropy = self.rl_policy_gradient_step(inputs, tts, self.val_cer)
+            loss, reward, entropy = self.rl_policy_gradient_step(inputs, tts, self.val_cer, self.val_ner_recall)
             self.log('val_reward', reward.item(), on_step=False, on_epoch=True, logger=True, prog_bar=True)
             self.log('val_entropy', entropy.item(), on_step=False, on_epoch=True, logger=True, prog_bar=True)
+            self.log('val_ner_recall', self.val_ner_recall, on_step=False, on_epoch=True, logger=True, prog_bar=True)
         else:
             raise ValueError(f'Unrecognized step_type: {self.step_type}')
 

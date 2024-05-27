@@ -35,18 +35,20 @@ class Statistics:
                                                       specific_category_list,
                                                       source_text_list)
 
+        self.lemmatizer = WordNetLemmatizer()
+        try:
+            self.lemmatizer.lemmatize("Lemmatization check")
+        except:
+            nltk.download('wordnet')
         self.orig_label_lemmas = dict()
         self.sub_label_lemmas = dict()
+        self.orig_entity_term_freq = dict()
+        self.sub_entity_term_freq = dict()
         self.error_rates = self._calculate_cer()
         self.ex_cer = np.array(list(map(np.mean, self.error_rates)))
         self.avg_cer = self.ex_cer.mean()
 
     def _calculate_cer(self) -> List[List[float]]:
-        lemmatizer = WordNetLemmatizer()
-        try:
-            lemmatizer.lemmatize("Lemmatization check")
-        except:
-            nltk.download('wordnet')
         cer = []
         # Sub - substituted
         for labels, doc, sub_doc in zip(self.general_category_list, self.source_text_list, self.completed_sentences):
@@ -58,16 +60,25 @@ class Statistics:
                     char_error_rate(sub_section.strip().lower() if self.is_uncased else sub_section.strip(),
                                     section.strip().lower() if self.is_uncased else section.strip()).item()
                 )
-                if label not in self.orig_label_lemmas:
-                    self.orig_label_lemmas[label] = set()
-                self.orig_label_lemmas[label] |= set(lemmatizer.lemmatize(word) for word in section.strip().split())
-                if label not in self.sub_label_lemmas:
-                    self.sub_label_lemmas[label] = set()
-                self.sub_label_lemmas[label] |= set(lemmatizer.lemmatize(word) for word in sub_section.strip().split())
+                self._add_lemmas(self.orig_label_lemmas, label, section)
+                self._add_lemmas(self.sub_label_lemmas, label, sub_section)
+                self._update_entity_counter(self.orig_entity_term_freq, label, section)
+                self._update_entity_counter(self.sub_entity_term_freq, label, sub_section)
 
             cer.append(doc_cer)
 
         return cer
+
+    def _add_lemmas(self, lemmas_set, label, section):
+        if label not in lemmas_set:
+            lemmas_set[label] = set()
+        lemmas_set[label] |= set(self.lemmatizer.lemmatize(word) for word in section.strip().split())
+
+    @staticmethod
+    def _update_entity_counter(entity_counter, label, sub_section):
+        if label not in entity_counter:
+            entity_counter[label] = dict()
+        entity_counter[label][sub_section] = entity_counter[label].get(sub_section, 0) + 1
 
     def examples_by_indexes(self, indexes) \
             -> Tuple[List[List[float]], List[List[str]], List[List[str]], List[List[str]]]:

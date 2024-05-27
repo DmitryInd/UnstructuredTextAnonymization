@@ -56,7 +56,7 @@ class ReferenceBookAnonymization(Anonymization):
         return doc_substitutions
 
     def _generate_entity(self, general_category: str, specific_category: str, entity: str):
-        deid_entity = entity
+        deid_entity = ''
         if general_category == 'ID':
             deid_entity = self.generate_random_id()
         elif general_category == 'AGE':
@@ -78,6 +78,8 @@ class ReferenceBookAnonymization(Anonymization):
                 deid_entity = self.generate_url()
             elif specific_category == "IPADDR" or specific_category == "IPADDRESS":
                 deid_entity = self.generate_random_ip()
+            else:
+                deid_entity = self.generate_phone_number()
         elif general_category == 'LOCATION':
             if specific_category == 'HOSPITAL':
                 deid_entity = self.generate_from_ref_book(self.hospitals)
