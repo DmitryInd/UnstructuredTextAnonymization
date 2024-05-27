@@ -1,12 +1,14 @@
+import itertools
 import random
 from typing import List, Tuple
 
+import nltk
 import numpy as np
+from nltk.stem import WordNetLemmatizer
 from tabulate import tabulate
 from torchmetrics.functional.text import char_error_rate
 
 from anonymization.base import Anonymization
-import itertools
 
 
 class Statistics:
@@ -32,21 +34,37 @@ class Statistics:
         self.completed_sentences = self.anonymization(general_category_list,
                                                       specific_category_list,
                                                       source_text_list)
+
+        self.orig_label_lemmas = dict()
+        self.sub_label_lemmas = dict()
         self.error_rates = self._calculate_cer()
         self.ex_cer = np.array(list(map(np.mean, self.error_rates)))
         self.avg_cer = self.ex_cer.mean()
 
     def _calculate_cer(self) -> List[List[float]]:
+        lemmatizer = WordNetLemmatizer()
+        try:
+            lemmatizer.lemmatize("Lemmatization check")
+        except:
+            nltk.download('wordnet')
         cer = []
         # Sub - substituted
         for labels, doc, sub_doc in zip(self.general_category_list, self.source_text_list, self.completed_sentences):
             doc_cer = []
             for label, section, sub_section in zip(labels, doc, sub_doc):
-                if label != self.other_label:
-                    doc_cer.append(
-                        char_error_rate(sub_section.strip().lower() if self.is_uncased else sub_section.strip(),
-                                        section.strip().lower() if self.is_uncased else section.strip()).item()
-                    )
+                if label == self.other_label:
+                    continue
+                doc_cer.append(
+                    char_error_rate(sub_section.strip().lower() if self.is_uncased else sub_section.strip(),
+                                    section.strip().lower() if self.is_uncased else section.strip()).item()
+                )
+                if label not in self.orig_label_lemmas:
+                    self.orig_label_lemmas[label] = set()
+                self.orig_label_lemmas[label] |= set(lemmatizer.lemmatize(word) for word in section.strip().split())
+                if label not in self.sub_label_lemmas:
+                    self.sub_label_lemmas[label] = set()
+                self.sub_label_lemmas[label] |= set(lemmatizer.lemmatize(word) for word in sub_section.strip().split())
+
             cer.append(doc_cer)
 
         return cer

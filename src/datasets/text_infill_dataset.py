@@ -272,6 +272,7 @@ class StoriesMaskedTextInfillDataset(MaskedTextInfillDataset):
 
         if self.exclude_nonstandard:
             from nltk.tokenize import sent_tokenize
+            import nltk
 
             standardized = []
             for s in stories:
@@ -282,7 +283,7 @@ class StoriesMaskedTextInfillDataset(MaskedTextInfillDataset):
                     if len(sent_tokenize(paragraphs[-1])) != 5:
                         continue
                 except:
-                    raise Exception('Need to call nltk.download(\'punkt\')')
+                    nltk.download('punkt')
                 standardized.append(s)
             stories = standardized
 

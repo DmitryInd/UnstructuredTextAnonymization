@@ -8,6 +8,7 @@ from torch.utils.data import DataLoader
 from transformers import set_seed
 
 from anonymization.ref_book import ReferenceBookAnonymization
+from anonymization.donated_dataset import DonatedDatasetAnonymization
 
 sys.path.insert(1, "./src")
 from datasets.ner_dataset import get_ner_dataset
@@ -18,10 +19,16 @@ if __name__ == '__main__':
     set_seed(42)
     # Config initialisation
     anon_config = yaml.load(open("configs/ref_book_anonymization_config.yaml", 'r'), Loader=yaml.Loader)
-    data_config = yaml.load(open("configs/i2b2-2014_data_config.yaml", 'r'), Loader=yaml.Loader)
+    donor_data_config = yaml.load(open("configs/i2b2-2014_data_config.yaml", 'r'), Loader=yaml.Loader)
     model_config = yaml.load(open("configs/bert-large_model_config.yaml", 'r'), Loader=yaml.Loader)
+    data_config = yaml.load(open("configs/i2b2-2006_data_config.yaml", 'r'), Loader=yaml.Loader)
+    data_config["pretrained_tokenizer"] = model_config.get("pretrained_tokenizer", data_config["pretrained_tokenizer"])
+    data_config["max_token_number"] = model_config.get("max_token_number", data_config["max_token_number"])
     # Data processing
-    anonymization = ReferenceBookAnonymization(**anon_config, other_label=data_config['other_label'])
+    # anonymization = ReferenceBookAnonymization(**anon_config, other_label=data_config['other_label'])
+    path_to_donor = Path(donor_data_config["train_data_path"]).with_suffix(".pkl")
+    anonymization = DonatedDatasetAnonymization.use_saved_dataset_as_donor(str(path_to_donor),
+                                                                           other_label=data_config['other_label'])
     train_dataset = get_ner_dataset(path_to_folder=data_config["train_data_path"],
                                     anonymization=anonymization, **data_config)
     val_dataset = get_ner_dataset(path_to_folder=data_config["validate_data_path"], **data_config)

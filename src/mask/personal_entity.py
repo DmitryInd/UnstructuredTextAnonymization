@@ -2,6 +2,7 @@ from enum import Enum
 from typing import List
 
 from nltk.tokenize import sent_tokenize
+import nltk
 
 from mask.base import MaskFn
 
@@ -25,7 +26,7 @@ class PersonalEntityMaskFn(MaskFn):
         try:
             sent_tokenize('Ensure punkt installed.')
         except:
-            raise ValueError('Need to call nltk.download(\'punkt\')')
+            nltk.download('punkt')
         self.is_markup = is_markup
         self.markup_model = markup_model
 
