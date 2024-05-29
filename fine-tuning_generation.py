@@ -94,7 +94,7 @@ if __name__ == '__main__':
         "callbacks": [text_infill_checkpoint_callback, early_stopping_callback]
     }
     trainer = pl.Trainer(**trainer_args, enable_progress_bar=True)
-    trainer.fit(text_infill_model, train_dataloader, val_dataloader)
+    trainer.fit(text_infill_model, train_dataloader, val_dataloader, ckpt_path=path_to_checkpoint)
     # Plot graphics
     t_reader = TensorBoardReader(Path(model_config["log_dir"]) / Path("lightning_logs"))
     t_reader.plot_text_infill_tensorboard_graphics()

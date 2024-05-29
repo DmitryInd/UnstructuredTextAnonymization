@@ -56,9 +56,10 @@ class Statistics:
             for label, section, sub_section in zip(labels, doc, sub_doc):
                 if label == self.other_label:
                     continue
+                section, sub_section = (section.strip().lower(), sub_section.strip().lower()) if self.is_uncased else \
+                                       (section.strip(), sub_section.strip())
                 doc_cer.append(
-                    char_error_rate(sub_section.strip().lower() if self.is_uncased else sub_section.strip(),
-                                    section.strip().lower() if self.is_uncased else section.strip()).item()
+                    char_error_rate(sub_section, section).item()
                 )
                 self._add_lemmas(self.orig_label_lemmas, label, section)
                 self._add_lemmas(self.sub_label_lemmas, label, sub_section)

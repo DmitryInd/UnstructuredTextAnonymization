@@ -90,7 +90,7 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         self.repetition_penalty = repetition_penalty
         self.repetition_threshold = repetition_threshold
         self.type_gen_tf = [None for _ in range(num_classes)]
-        self.type_gen_alpha = 0.98
+        self.type_gen_alpha = 0.99
         self.sameness_penalty = sameness_penalty
         self.sameness_threshold = sameness_threshold
         # Additional modules for training

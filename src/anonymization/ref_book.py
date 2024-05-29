@@ -63,7 +63,7 @@ class ReferenceBookAnonymization(Anonymization):
             deid_entity = self.generate_age("89" in specific_category)
         elif general_category == 'NAME':
             deid_entity = self.generate_name()
-        elif general_category == 'PROFESSIONS':
+        elif general_category == 'PROFESSION':
             deid_entity = self.generate_from_ref_book(self.professions)
         elif general_category == "DATE":
             deid_entity = self.generate_date(with_year=(specific_category == "DATEYEAR"))

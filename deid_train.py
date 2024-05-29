@@ -7,10 +7,9 @@ from pytorch_lightning.callbacks import ModelCheckpoint, early_stopping
 from torch.utils.data import DataLoader
 from transformers import set_seed
 
+sys.path.insert(1, "./src")
 from anonymization.ref_book import ReferenceBookAnonymization
 from anonymization.donated_dataset import DonatedDatasetAnonymization
-
-sys.path.insert(1, "./src")
 from datasets.ner_dataset import get_ner_dataset
 from models.bert_model import PretrainedBertNER
 from utils.log_reader import TensorBoardReader
