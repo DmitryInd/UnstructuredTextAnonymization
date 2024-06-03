@@ -64,11 +64,14 @@ class NERTokenizer(ABC):
         offsets, token_segments, label_segments = [], [], []
         if self.max_sent_len is not None:
             i = 0
-            while i < len(token_id_list):
-                offset, token_id_seg, label_id_seg = self._truncate(token_id_list[i:i + self.max_sent_len + 1],
-                                                                    label_id_list[i:i + self.max_sent_len + 1],
-                                                                    is_first=i == 0,
-                                                                    is_last=i + self.max_sent_len >= len(token_id_list))
+            is_last = False
+            while i < len(token_id_list) and not is_last:
+                is_last = (i + self.max_sent_len) >= len(token_id_list)
+                offset, token_id_seg, label_id_seg = self._truncate(
+                    token_id_list[i:i + self.max_sent_len + self.overlap + 1],
+                    label_id_list[i:i + self.max_sent_len + self.overlap + 1],
+                    is_first=(i == 0), is_last=is_last
+                )
                 i += offset
 
                 offsets.append(i)
@@ -331,9 +334,12 @@ class WordPieceNERTokenizer(NERTokenizer):
                     offset = i
                     break
 
+        token_id_list, label_id_list = token_id_list[:self.max_sent_len + 1], label_id_list[:self.max_sent_len + 1]
         if not is_last:
-            for i, token_id in enumerate(reversed(token_id_list)):
-                if self.index2word[token_id][:2] != "##" and len(token_id_list) - i - 1 <= self.max_sent_len + 1:
+            # In order not to repeat anything more than one time
+            left_border = min(self.overlap * 2 - offset, len(token_id_list))
+            for i, token_id in enumerate(reversed(token_id_list[left_border:])):
+                if self.index2word[token_id][:2] != "##":
                     token_id_list = token_id_list[:-i - 1]
                     label_id_list = label_id_list[:-i - 1]
                     break
