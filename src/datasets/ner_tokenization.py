@@ -98,15 +98,30 @@ class NERTokenizer(ABC):
                       token_segments_list: List[List[int]],
                       label_segments_list: List[Union[List[int], np.ndarray]]) -> Tuple[List[str], List[int]]:
         """
-        Функция совмещает размеченные пересечённые отрывки текста возвращает единую разметку
+        Функция совмещает размеченные пересечённые отрывки текста и возвращает единую расшифрованную разметку
         :param offsets: последовательность сдвигов по токенам пересекающихся отрезков записи
         :param token_segments_list: последовательность пересекающихся отрезков токенов из одной записи
         :param label_segments_list: последовательность пересекающихся отрезков меток/вероятностей меток токенов из одной записи
         :return: последовательный список частей записи, список соответствующих им меток
         """
+        global_text, global_labels = self.unite_labels(offsets, token_segments_list, label_segments_list)
+        return self.decode(global_text, global_labels)
+
+    def unite_labels(self, offsets: List[int],
+                     token_segments_list: List[List[int]],
+                     label_segments_list: List[Union[List[int], np.ndarray]]) -> Tuple[List[int], np.ndarray]:
+        """
+        Функция совмещает размеченные пересечённые отрывки текста и возвращает объёдинённое нерасшифрованную разметку
+        :param offsets: последовательность сдвигов по токенам пересекающихся отрезков записи
+        :param token_segments_list: последовательность пересекающихся отрезков токенов из одной записи
+        :param label_segments_list: последовательность пересекающихся отрезков меток/вероятностей меток токенов из одной записи
+        :return: объединённую последовательность токенов записи,
+                 последовательность соответствующих им вероятностей меток
+        """
         # Firstly, left only tokens between sos and eos ones
-        real_length = list(map(lambda x: x.index(self.eos_token), token_segments_list))
-        token_segments_list = [token_ids[1:length] for length, token_ids in zip(real_length, token_segments_list)]
+        real_length = list(map(lambda x: (x.index(self.word2index[self.eos_token])
+                                          if self.word2index[self.eos_token] in x else len(x)), token_segments_list))
+        token_segments_list = [token_ids[1: length] for length, token_ids in zip(real_length, token_segments_list)]
         label_segments_list = [labels[1:length] for length, labels in zip(real_length, label_segments_list)]
         # Secondly, lets analyze length of complete text and number of labels
         last_record_id = np.argmax(offsets)
@@ -118,8 +133,7 @@ class NERTokenizer(ABC):
             if isinstance(labels, list) and isinstance(labels[0], int):
                 max_label_id = max(max_label_id, max(labels))
             elif isinstance(labels, np.ndarray) and len(labels.shape) == 2:
-                max_label_id = max(max_label_id, labels[0].shape[1] - 1)
-
+                max_label_id = max(max_label_id, labels.shape[1] - 1)
         global_text = [-1] * global_length
         global_labels = np.zeros((global_length, max_label_id + 1), dtype=np.float64)
         global_counter = np.zeros((global_length, max_label_id + 1), dtype=np.int32)
@@ -137,7 +151,7 @@ class NERTokenizer(ABC):
             global_labels[offset:offset + len(token_ids)] += probs
             global_counter[offset:offset + len(token_ids)] += 1
 
-        return self.decode(global_text, global_labels / global_counter)
+        return global_text, global_labels / global_counter
 
     def parse_labels_from_marked_up_log_probs(self, log_probs: torch.Tensor, mark_up: torch.Tensor,
                                               labels_number: Optional[List[int]] = None) -> List[int]:
@@ -250,7 +264,7 @@ class WordPieceNERTokenizer(NERTokenizer):
         predicted_labels = []
         word_tokens = []
         max_label_id = max(label_list) if isinstance(label_list, list) else label_list.shape[1] - 1
-        possible_labels = np.zeros((max_label_id + 1, ), dtype=np.float64)
+        possible_labels = np.zeros((max_label_id + 1,), dtype=np.float64)
         for token_id, label in zip(token_id_list, label_list):
             token = self.index2word[token_id]
             if word_tokens and token[:2] != "##":
@@ -260,7 +274,7 @@ class WordPieceNERTokenizer(NERTokenizer):
                 else:
                     predicted_tokens.append(word_tokens)
                     predicted_labels.append(final_label)
-                possible_labels = np.zeros((max_label_id + 1, ), dtype=np.float64)
+                possible_labels = np.zeros((max_label_id + 1,), dtype=np.float64)
                 word_tokens = []
             if token == self.eos_token:
                 break

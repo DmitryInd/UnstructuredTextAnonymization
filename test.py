@@ -18,7 +18,7 @@ if __name__ == '__main__':
     # Config initialisation
     anon_config = yaml.load(open("configs/ref_book_anonymization_config.yaml", 'r'), Loader=yaml.Loader)
     data_config = yaml.load(open("configs/i2b2-2014_data_config.yaml", 'r'), Loader=yaml.Loader)
-    model_config = yaml.load(open("configs/bert-base_model_config.yaml", 'r'), Loader=yaml.Loader)
+    model_config = yaml.load(open("configs/bert-large_model_config.yaml", 'r'), Loader=yaml.Loader)
     # Data processing
     anonymization = ReferenceBookAnonymization(**anon_config,
                                                other_label=data_config['other_label'])
@@ -34,7 +34,7 @@ if __name__ == '__main__':
     t_reader = TensorBoardReader(Path(model_config["log_dir"]) / Path("lightning_logs"))
     path_to_checkpoint = t_reader.get_ckpt_path()
     # Pytorch lightning
-    ner_model = PretrainedBertNER.load_from_checkpoint(path_to_checkpoint)
+    ner_model = PretrainedBertNER.load_from_checkpoint(path_to_checkpoint, strict=False)
     print(ner_model)
     trainer_args = {
         "accelerator": "gpu",

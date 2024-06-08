@@ -1,4 +1,4 @@
-from typing import List, Tuple
+from typing import List, Tuple, Dict
 
 import numpy as np
 import torch
@@ -8,42 +8,64 @@ from tabulate import tabulate
 from torch import nn
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
+from datasets.ner_tokenization import NERTokenizer
+from datasets.ner_dataset import NerDataset
 
 
 class Statistics:
     def __init__(self, model: nn.Module, loader: DataLoader, device='cuda:0'):
-        self.device = device
-        self.model = model.to(device)
-        self.model.eval()
-        self.loader = loader
-        self.dataset = loader.dataset
-        self.tokenizer = self.dataset.tokenizer
-        self.record2idx = self.dataset.record2idx
-        self.index2label = self.dataset.index2label  # Last label is necessarily padding
-        self.label2index = self.dataset.label2index
-        self.pad_index = self.label2index[self.dataset.pad_label]
-        self.other_index = self.label2index[self.dataset.other_label]
-        self.record_ids, self.true_labels, self.predicted_labels = self._compute_true_and_predicted_labels()
+        assert isinstance(loader.dataset, NerDataset), "Dataset in loader must be NerDataset"
+        assert loader.dataset.index2label[-1] == loader.dataset.pad_label, "Last label must be padding"
+
+        self.tokenizer: NERTokenizer = loader.dataset.tokenizer
+        self.index2label = loader.dataset.index2label
+        self.label2index = loader.dataset.label2index
+        self.pad_index = self.label2index[loader.dataset.pad_label]
+        self.other_index = self.label2index[loader.dataset.other_label]
+        self.united_records, self.record_ids, self.true_labels, self.predicted_labels \
+            = self._compute_true_and_predicted_labels(model.to(device), loader)
         self.confusion_matrix = self._compute_confusion_matrix()
         self.fault_ids = self._get_fault_record_ids()
 
     @torch.no_grad()
-    def _compute_true_and_predicted_labels(self) -> Tuple[List[int], List[int], List[int]]:
-        # TODO переделать с использованием decode_record
+    def _compute_true_and_predicted_labels(self, model: nn.Module, loader: DataLoader) \
+            -> Tuple[Dict[str, Tuple[List[int], List[int], np.ndarray]], List[str], List[int], List[int]]:
+        """
+        return: {record id: (токены - C, вероятности истинных меток - L x C, логиты предсказанных меток - L x C ), ...},
+                объединённый список record id,
+        """
+        model.eval()
+        # Firstly, collect all results for all records
+        records: Dict[str, Tuple[List[int], List[List[int]], List[np.ndarray], List[List[int]]]] = dict()
+        for batch_ids, inputs, labels in tqdm(loader, desc='computing predictions'):
+            batch_pred = model(inputs.to(model.device)).softmax(dim=-1).cpu().numpy()  # B, L, C
+            for sample_id, tokens, prediction, label in zip(batch_ids, inputs.tolist(), batch_pred, labels.tolist()):
+                sample_id = sample_id.split(':')
+                record_id, offset = ':'.join(sample_id[:-1]), sample_id[-1]
+                if record_id not in records:
+                    records[record_id] = ([], [], [], [])
+                records[record_id][0].append(int(offset))
+                records[record_id][1].append(tokens)
+                records[record_id][2].append(prediction)
+                records[record_id][3].append(label)
+
+        # Secondly, unite all records predictions
+        united_records: Dict[str, Tuple[List[int], List[int], np.ndarray]] = dict()
         record_ids = []
         predictions = []
         true_labels = []
-        for batch_ids, inputs, labels in tqdm(self.loader):
-            inputs = inputs.to(self.device)
-            batch_pred = self.model(inputs).cpu().argmax(2)
-            for sample_id, prediction, label in zip(batch_ids, batch_pred, labels.cpu()):
-                prediction = [x for i, x in enumerate(prediction.tolist()) if label[i] != self.pad_index]
-                label = [x for i, x in enumerate(label.tolist()) if label[i] != self.pad_index]
-                record_ids.extend([sample_id.item()]*len(prediction))
-                predictions.extend(prediction)
-                true_labels.extend(label)
+        for record_id in tqdm(records.keys(), desc='uniting records'):
+            tokens_set, predictions_set = self.tokenizer.unite_labels(*records[record_id][:-1])
+            _, labels_set = self.tokenizer.unite_labels(offsets=records[record_id][0],
+                                                        token_segments_list=records[record_id][1],
+                                                        label_segments_list=records[record_id][3])
+            labels_set = labels_set.argmax(axis=-1).tolist()
+            united_records[record_id] = (tokens_set, labels_set, predictions_set)
+            record_ids.extend([record_id] * predictions_set.shape[0])
+            predictions.extend(predictions_set.argmax(axis=-1).tolist())
+            true_labels.extend(labels_set)
 
-        return record_ids, true_labels, predictions
+        return united_records, record_ids, true_labels, predictions
 
     def _compute_confusion_matrix(self):
         confusion_matrix = np.zeros((len(self.index2label) - 1, len(self.index2label) - 1))
@@ -110,13 +132,10 @@ class Statistics:
         print('Wrongly predicted examples:')
         for i in internal_ids:
             record_id = fault_record_ids[i]
-            idx = self.record2idx[record_id]
-            _, token_ids, label_ids = self.dataset[idx]
-            pred_ids = self.model(token_ids.to(self.device).unsqueeze(0))[0].argmax(1)
-            token_ids, label_ids, pred_ids = token_ids.tolist(), label_ids.tolist(), pred_ids.tolist()
+            token_ids, label_ids, prediction = self.united_records[record_id]
             true_segments, true_label_ids = self.tokenizer.decode(token_ids, label_ids)
-            pred_segments, pred_label_ids = self.tokenizer.decode(token_ids, pred_ids)
-            print('_'*5 + f' Record {record_id} ' + '_'*5)
+            pred_segments, pred_label_ids = self.tokenizer.decode(token_ids, prediction)
+            print('_' * 5 + f' Record {record_id} ' + '_' * 5)
             print(tabulate([['Sentence:'] + true_segments,
                             ['True labels:'] + [self.index2label[index] for index in true_label_ids]],
                            tablefmt='orgtbl'))
