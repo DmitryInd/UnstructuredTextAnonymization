@@ -369,29 +369,103 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         l_border = start_positions.min().item()
         predictions[:, l_border + 1:] = -1
         past_key_values = None
-        finished = set()
-        while len(finished) < inputs.shape[0]:
+        while (l_border + 1) < inputs.shape[1] and (masks_number > 0).sum() > 0:
             shift = l_border if past_key_values is not None else 0
             results = self.model(torch.maximum(predictions[:, shift: l_border + 1], torch.tensor(0)),
                                  past_key_values=past_key_values)
             logits.append(results.logits)
+            past_key_values = results.past_key_values
+            # B, L, C -> B
             if temperature:
-                hard_pred = torch.argmax(gumbel_softmax(results.logits, tau=temperature), dim=-1)  # B, L, C
+                hard_pred = torch.argmax(gumbel_softmax(results.logits[:, l_border - shift], tau=temperature), dim=-1)
             else:
-                hard_pred = torch.argmax(results.logits, dim=-1)  # B, L, C
-            for i, row in enumerate(hard_pred):
+                hard_pred = torch.argmax(results.logits[:, l_border - shift], dim=-1)
+            for i, new_token in enumerate(hard_pred):
                 if start_positions[i] > l_border:
                     predictions[i, l_border + 1] = inputs[i, l_border + 1]
-                    continue
-                if (l_border + 1) >= inputs.shape[1] or masks_number[i] <= 0:
-                    finished.add(i)
-                    continue
-                if row[l_border - shift] == self.end_infill_id:
-                    masks_number[i] -= 1
-                predictions[i, l_border + 1] = row[l_border - shift]
+                elif (l_border + 1) < inputs.shape[1] and masks_number[i] > 0:
+                    if new_token == self.end_infill_id:
+                        masks_number[i] -= 1
+                    predictions[i, l_border + 1] = new_token
             l_border += 1
-            past_key_values = results.past_key_values
         return predictions, torch.cat(logits, dim=1)
+
+    def beam_search(self, inputs: torch.Tensor, tts: torch.Tensor, n_beams=1, temperature=0.0, fresh_start=False):
+        logits: List[Optional[torch.Tensor]] = [None] * n_beams
+        past_key_values: List[Optional[Tuple[Tuple[torch.Tensor, torch.Tensor], ...]]] = [None] * n_beams
+        masks_number = (tts == TargetType.CONTEXT_SPECIAL.value).sum(dim=1)[:, None].expand(-1, n_beams ** 2).clone()
+        if fresh_start:
+            start_positions = torch.nonzero(tts == TargetType.CONTEXT_INFILL_SEP.value)[:, 1]
+        else:
+            start_positions = (tts != TargetType.PAD.value).sum(dim=1) - 1
+        l_border: int = start_positions.min().item()
+        predictions = inputs[:, None, :].expand(-1, n_beams ** 2, -1).detach().clone()  # B, N_beams, L
+        predictions[:, :, l_border + 1:] = -1
+        log_probs = torch.zeros(inputs.shape[0], n_beams ** 2, device=self.device)
+        while (l_border + 1) < inputs.shape[1] and (masks_number > 0).sum() > 0:
+            predictions_set = [[] for _ in range(inputs.shape[0])]
+            # Generate new beams
+            for beam_id in range(0, n_beams ** 2, n_beams):
+                shift = l_border if past_key_values[beam_id // n_beams] is not None else 0
+                results = self.model(torch.maximum(predictions[:, beam_id, shift: l_border + 1], torch.tensor(0)),
+                                     past_key_values=past_key_values[beam_id // n_beams])
+                if logits[beam_id // n_beams] is None:
+                    logits[beam_id // n_beams] = results.logits
+                else:
+                    logits[beam_id // n_beams] = torch.cat([logits[beam_id // n_beams], results.logits], dim=1)
+                last_token_log_distr = log_softmax(results.logits[:, l_border - shift], dim=-1)
+                past_key_values[beam_id // n_beams] = results.past_key_values
+
+                if temperature:
+                    hard_pred = torch.argsort(gumbel_softmax(results.logits[:, l_border - shift], tau=temperature),
+                                              descending=True, dim=-1)  # B, C
+                else:
+                    hard_pred = torch.argsort(results.logits[:, l_border - shift], descending=True, dim=-1)  # B, C
+                hard_pred = hard_pred[:, :n_beams]  # B, N_beams
+
+                for i, row in enumerate(hard_pred):
+                    for new_beam_id in range(beam_id, beam_id + n_beams):
+                        if start_positions[i] > l_border:
+                            predictions[i, new_beam_id, l_border + 1] = inputs[i, l_border + 1]
+                        elif (l_border + 1) < inputs.shape[1] and masks_number[i, new_beam_id] > 0:
+                            new_token = row[new_beam_id - beam_id]
+                            if new_token == self.end_infill_id:
+                                masks_number[i, new_beam_id] -= 1
+                            predictions[i, new_beam_id, l_border + 1] = new_token
+                            length = l_border - start_positions[i]
+                            log_probs[i, new_beam_id] = (log_probs[i, new_beam_id] * length
+                                                         + last_token_log_distr[i, new_token]) / (length + 1)
+
+                        if any(predictions[i, new_beam_id].equal(x) for x in predictions_set[i]):
+                            log_probs[i, new_beam_id] = -torch.inf
+                        else:
+                            predictions_set[i].append(predictions[i, new_beam_id])
+
+            # Left only the best n beams
+            best_beam_ids = log_probs.argsort(descending=True, dim=1)[:, :n_beams]
+            new_logits = [torch.zeros_like(logits[0]) for _ in range(n_beams)]
+            new_past_key_values = [
+                tuple((torch.zeros_like(past_key_values[0][l][0]), torch.zeros_like(past_key_values[0][l][1]))
+                      for l in range(len(past_key_values[0]))) for _ in range(n_beams)
+            ]
+            for i in range(predictions.shape[0]):
+                for j in range(n_beams):
+                    new_logits[j][i] = logits[best_beam_ids[i, j] // n_beams][i]
+                    for l in range(len(past_key_values[0])):
+                        new_past_key_values[j][l][0][i] = past_key_values[best_beam_ids[i, j] // n_beams][l][0][i]
+                        new_past_key_values[j][l][1][i] = past_key_values[best_beam_ids[i, j] // n_beams][l][1][i]
+                copy_ids = sum([[x] * n_beams for x in best_beam_ids[i].tolist()], [])
+                predictions[i] = predictions[i, copy_ids]
+                masks_number[i] = masks_number[i, copy_ids]
+                log_probs[i] = log_probs[i, copy_ids]
+
+            logits = new_logits
+            past_key_values = new_past_key_values
+            l_border += 1
+
+        best_predictions = predictions[:, list(range(0, n_beams ** 2, n_beams)), :]
+        best_logits = torch.cat([x[:, None, :, :] for x in logits], dim=1)
+        return best_predictions,  best_logits
 
     @staticmethod
     def tts_to_targets(inputs, tts, label_tts, reverse=False):

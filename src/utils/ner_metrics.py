@@ -37,7 +37,7 @@ class Statistics:
         model.eval()
         # Firstly, collect all results for all records
         records: Dict[str, Tuple[List[int], List[List[int]], List[np.ndarray], List[List[int]]]] = dict()
-        for batch_ids, inputs, labels in tqdm(loader, desc='computing predictions'):
+        for batch_ids, inputs, labels in tqdm(loader, desc='Computing predictions'):
             batch_pred = model(inputs.to(model.device)).softmax(dim=-1).cpu().numpy()  # B, L, C
             for sample_id, tokens, prediction, label in zip(batch_ids, inputs.tolist(), batch_pred, labels.tolist()):
                 sample_id = sample_id.split(':')
@@ -54,7 +54,7 @@ class Statistics:
         record_ids = []
         predictions = []
         true_labels = []
-        for record_id in tqdm(records.keys(), desc='uniting records'):
+        for record_id in tqdm(records.keys(), desc='Uniting records'):
             tokens_set, predictions_set = self.tokenizer.unite_labels(*records[record_id][:-1])
             _, labels_set = self.tokenizer.unite_labels(offsets=records[record_id][0],
                                                         token_segments_list=records[record_id][1],

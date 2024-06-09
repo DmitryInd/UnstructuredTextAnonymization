@@ -105,6 +105,8 @@ class NerDataset(Dataset, ABC):
 
         if anonymization is not None:
             tokenized_source_list = anonymization(general_category_list, specific_category_list, tokenized_source_list)
+            tokenized_target_list = sum([[x] * anonymization.var_num for x in tokenized_target_list], [])
+            record_ids = sum([[f'{x}:{i}' for i in range(anonymization.var_num)] for x in record_ids], [])
         # Data tokenization
         self.tokenizer = WordPieceNERTokenizer(tokenized_source_list,
                                                self.label2index[self.pad_label], pad_flag=eq_max_padding,

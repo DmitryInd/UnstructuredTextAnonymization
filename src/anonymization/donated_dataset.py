@@ -8,8 +8,8 @@ from anonymization.base import Anonymization
 
 class DonatedDatasetAnonymization(Anonymization):
     def __init__(self, general_category_list: List[List[str]], specific_category_list: List[List[str]],
-                 source_text_list: List[List[str]], other_label: str = 'O', **kwargs):
-        super().__init__(other_label)
+                 source_text_list: List[List[str]], other_label: str = 'O', var_num: int = 1, **kwargs):
+        super().__init__(other_label, var_num)
         self.ref_book = dict()
         self.general_ref_book = dict()
         for gen_categories, spec_categories, source_text \
@@ -36,20 +36,26 @@ class DonatedDatasetAnonymization(Anonymization):
         return DonatedDatasetAnonymization(general_category_list, specific_category_list, source_text_list, other_label)
 
     def _get_substitutions(self, general_category_list: List[List[str]], specific_category_list: List[List[str]],
-                           source_text_list: List[List[str]]) -> List[List[str]]:
+                           source_text_list: List[List[str]]) -> List[List[List[str]]]:
         doc_substitutions = []
         for general_categories, specific_categories, entities \
                 in zip(general_category_list, specific_category_list, source_text_list):
-            substitutions = []
-            for general_category, specific_category, entity in zip(general_categories, specific_categories, entities):
-                if general_category == self.other_label:
-                    continue
-                substitution = ''
-                if specific_category in self.ref_book:
-                    substitution = np.random.choice(self.ref_book[specific_category])
-                elif general_category in self.general_ref_book:
-                    substitution = np.random.choice(self.general_ref_book[specific_category])
-                substitutions.append(substitution)
-            doc_substitutions.append(substitutions)
+            variants = []
+            for i in range(self.var_num):
+                substitutions = []
+                for general_category, specific_category, entity \
+                        in zip(general_categories, specific_categories, entities):
+                    if general_category == self.other_label:
+                        continue
+                    substitution = ''
+                    if specific_category in self.ref_book:
+                        substitution = np.random.choice(self.ref_book[specific_category])
+                    elif general_category in self.general_ref_book:
+                        substitution = np.random.choice(self.general_ref_book[specific_category])
+                    substitutions.append(substitution)
+
+                variants.append(substitutions)
+
+            doc_substitutions.append(variants)
 
         return doc_substitutions

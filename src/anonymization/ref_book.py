@@ -21,8 +21,9 @@ class ReferenceBookAnonymization(Anonymization):
                  path_to_hospitals: str,
                  path_to_professions: str,
                  other_label: str = 'O',
+                 var_num: int = 1,
                  **kwargs):
-        super().__init__(other_label)
+        super().__init__(other_label, var_num)
         self.professions = self._read_ref_book(path_to_professions)
         self.hospitals = self._read_ref_book(path_to_hospitals)
         self.organizations = self._read_ref_book(path_to_organizations)
@@ -43,15 +44,21 @@ class ReferenceBookAnonymization(Anonymization):
         return ref_book_list
 
     def _get_substitutions(self, general_category_list: List[List[str]], specific_category_list: List[List[str]],
-                           source_text_list: List[List[str]]) -> List[List[str]]:
+                           source_text_list: List[List[str]]) -> List[List[List[str]]]:
         doc_substitutions = []
         for general_categories, specific_categories, entities \
                 in zip(general_category_list, specific_category_list, source_text_list):
-            substitutions = []
-            for general_category, specific_category, entity in zip(general_categories, specific_categories, entities):
-                if general_category != self.other_label:
-                    substitutions.append(self._generate_entity(general_category, specific_category, entity))
-            doc_substitutions.append(substitutions)
+            variants = []
+            for i in range(self.var_num):
+                substitutions = []
+                for general_category, specific_category, entity \
+                        in zip(general_categories, specific_categories, entities):
+                    if general_category != self.other_label:
+                        substitutions.append(self._generate_entity(general_category, specific_category, entity))
+
+                variants.append(substitutions)
+
+            doc_substitutions.append(variants)
 
         return doc_substitutions
 

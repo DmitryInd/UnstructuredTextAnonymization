@@ -24,16 +24,17 @@ class Statistics:
         :param source_text_list: исходный текст в формате [список слов в документе, ...]
         :param is_uncased: учитывать ли в регистр символов при подсчёте ошибок
         """
-        self.anonymization = anonymization
-        self.general_category_list = general_category_list
-        self.specific_category_list = specific_category_list
-        self.source_text_list = source_text_list
         self.is_uncased = is_uncased
 
+        self.anonymization = anonymization
         self.other_label = self.anonymization.other_label
         self.completed_sentences = self.anonymization(general_category_list,
                                                       specific_category_list,
                                                       source_text_list)
+
+        self.general_category_list = sum([[x] * anonymization.var_num for x in general_category_list], [])
+        self.specific_category_list = sum([[x] * anonymization.var_num for x in specific_category_list], [])
+        self.source_text_list = sum([[x] * anonymization.var_num for x in source_text_list], [])
 
         self.lemmatizer = WordNetLemmatizer()
         try:
@@ -56,6 +57,7 @@ class Statistics:
             for label, section, sub_section in zip(labels, doc, sub_doc):
                 if label == self.other_label:
                     continue
+
                 section, sub_section = (section.strip().lower(), sub_section.strip().lower()) if self.is_uncased else \
                                        (section.strip(), sub_section.strip())
                 doc_cer.append(

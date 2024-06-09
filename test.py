@@ -6,6 +6,10 @@ import yaml
 from torch.utils.data import DataLoader
 from transformers import set_seed
 
+from anonymization.gpt2_generation import GPT2GenerationAnonymization
+from mask.personal_entity import MaskEntityType
+from models.gpt2_model import PretrainedGPT2TextInfilling
+
 sys.path.insert(1, "./src")
 from datasets.ner_dataset import get_ner_dataset
 from models.bert_model import PretrainedBertNER
@@ -16,12 +20,20 @@ from anonymization.ref_book import ReferenceBookAnonymization
 if __name__ == '__main__':
     set_seed(42)
     # Config initialisation
-    anon_config = yaml.load(open("configs/ref_book_anonymization_config.yaml", 'r'), Loader=yaml.Loader)
+    # anon_config = yaml.load(open("configs/ref_book_anonymization_config.yaml", 'r'), Loader=yaml.Loader)
+    anon_config = yaml.load(open("configs/gpt2_anonymization_config.yaml", 'r'), Loader=yaml.Loader)
     data_config = yaml.load(open("configs/i2b2-2014_data_config.yaml", 'r'), Loader=yaml.Loader)
     model_config = yaml.load(open("configs/bert-large_model_config.yaml", 'r'), Loader=yaml.Loader)
     # Data processing
-    anonymization = ReferenceBookAnonymization(**anon_config,
-                                               other_label=data_config['other_label'])
+    # anonymization = ReferenceBookAnonymization(**anon_config,
+    #                                            other_label=data_config['other_label'])
+    model_reader = TensorBoardReader(Path(anon_config["log_dir"]) / Path("lightning_logs"))
+    path_to_checkpoint = model_reader.get_ckpt_path(anon_config["model_version"])
+    text_infill_model = PretrainedGPT2TextInfilling.load_from_checkpoint(path_to_checkpoint, strict=False).to("cuda:0")
+    text_infill_model.eval()
+    anonymization = GPT2GenerationAnonymization(text_infill_model,
+                                                label2type=lambda x: MaskEntityType[x.upper()],
+                                                mask_types=list(MaskEntityType), **anon_config)
     test_dataset = get_ner_dataset(path_to_folder=data_config["validate_data_path"],
                                    anonymization=anonymization, device='cpu', **data_config)
     test_dataloader = DataLoader(test_dataset, shuffle=False,

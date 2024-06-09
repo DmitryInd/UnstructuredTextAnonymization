@@ -15,8 +15,8 @@ class GPT2GenerationAnonymization(Anonymization):
     def __init__(self, model: PretrainedGPT2TextInfilling, path_to_cashed_data='./data/token/cashed_for_gpt2_anon',
                  other_label='O', is_uncased=False, label2type=None, mask_types: Optional[List[Enum]] = None,
                  pretrained_tokenizer: str = None, max_full_ex_len=256, max_only_context_len=192, overlap=32,
-                 eq_max_padding=True, gen_model_batch_size=24, device: str = "cuda:0", **kwargs):
-        super().__init__(other_label)
+                 eq_max_padding=True, gen_model_batch_size=24, device: str = "cuda:0", var_num: int = 1, **kwargs):
+        super().__init__(other_label, var_num)
         self.model = model
         self.path_to_cashed_data = path_to_cashed_data
         self.is_uncased = is_uncased
@@ -31,7 +31,7 @@ class GPT2GenerationAnonymization(Anonymization):
         self.device = device
 
     def _get_substitutions(self, general_category_list: List[List[str]], specific_category_list: List[List[str]],
-                           source_text_list: List[List[str]]) -> List[List[str]]:
+                           source_text_list: List[List[str]]) -> List[List[List[str]]]:
         temp_ids = list(map(str, range(len(source_text_list))))
         dataset = FromListMarkedUpTextInfillDataset(
             self.path_to_cashed_data,
@@ -51,17 +51,19 @@ class GPT2GenerationAnonymization(Anonymization):
         self.model.end_infill_id = dataset.tokenizer.end_infill_id
         self.model.eval()
         last_record_id = ""
-        for batch in tqdm(dataloader):
+        for trap, batch in enumerate(tqdm(dataloader)):
             record_ids, inputs, tts = batch  # B, L
             with torch.no_grad():
-                outputs, _ = self.model.inference(inputs, tts)
+                outputs, _ = self.model.beam_search(inputs, tts, n_beams=self.var_num)
+
             answers_starts = torch.nonzero(tts == TargetType.CONTEXT_INFILL_SEP.value)[:, 1].tolist()
             masks_numbers = (tts == TargetType.CONTEXT_SPECIAL.value).sum(dim=-1).tolist()
             for record_id, answers_start, masks_number, pred in zip(record_ids, answers_starts, masks_numbers, outputs):
-                record_id = record_id.split(":")[0]
+                record_id = ":".join(record_id.split(":")[:-1])
                 if record_id != last_record_id:
                     last_record_id = record_id
-                    predictions.append([])
-                answers = dataset.tokenizer.parse_answers(pred, answers_start + 1, masks_number)
-                predictions[-1].extend(answers)
+                    predictions.append([[] for _ in range(self.var_num)])
+                for i in range(self.var_num):
+                    answers = dataset.tokenizer.parse_answers(pred[i], answers_start + 1, masks_number)
+                    predictions[-1][i].extend(answers)
         return predictions

@@ -111,7 +111,7 @@ class NERTokenizer(ABC):
                      token_segments_list: List[List[int]],
                      label_segments_list: List[Union[List[int], np.ndarray]]) -> Tuple[List[int], np.ndarray]:
         """
-        Функция совмещает размеченные пересечённые отрывки текста и возвращает объёдинённое нерасшифрованную разметку
+        Функция совмещает размеченные пересечённые отрывки текста и возвращает объёдинённую нерасшифрованную разметку
         :param offsets: последовательность сдвигов по токенам пересекающихся отрезков записи
         :param token_segments_list: последовательность пересекающихся отрезков токенов из одной записи
         :param label_segments_list: последовательность пересекающихся отрезков меток/вероятностей меток токенов из одной записи
@@ -137,7 +137,9 @@ class NERTokenizer(ABC):
         global_text = [-1] * global_length
         global_labels = np.zeros((global_length, max_label_id + 1), dtype=np.float64)
         global_counter = np.zeros((global_length, max_label_id + 1), dtype=np.int32)
+
         for offset, token_ids, labels in zip(offsets, token_segments_list, label_segments_list):
+            assert len(token_ids) == len(labels), "Tokens and labels should have the same length"
             if len(labels) == 0:
                 continue
             if isinstance(labels, list) and isinstance(labels[0], int):
