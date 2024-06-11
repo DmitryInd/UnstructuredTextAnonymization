@@ -5,6 +5,6 @@ max_full_ex_len: 128
 max_only_context_len: 96
 overlap: 40
 gen_model_batch_size: 23
-var_num: 2
-model_version: 21
+var_num: 3
+model_version: 23
 log_dir: "./gpt2-small"

@@ -23,7 +23,7 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
     def __init__(self, pretrained_name: str, vocab_size: int, train_context: float,
                  lr: float, total_steps: int, adaptation_part: int, div_factor: int, step_type='classic',
                  types_weights=None, end_infill_id=None, target_types_pred=0.0, real_types_match=0.0, num_classes=2,
-                 sample_temperature=0., self_critical=False, with_context=False, maximize_distance=0.0,
+                 samples_num=1, sample_temperature=0., self_critical=False, with_context=False, maximize_distance=0.0,
                  repetition_penalty=0.0, repetition_threshold=0.02, rep_accum_batch_num=1,
                  sameness_penalty=0.0, sameness_threshold=0.01, **kwargs):
         """
@@ -34,13 +34,14 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         :param total_steps: полное количество шагов обучения: ~ кол-во эпох * размер батча
         :param adaptation_part: доля эпох для обновления весов с низким learning rate
         :param div_factor: максимальный делитель, на который уменьшается learning rate в OneCycle подходе
-        :param step_type: тип шага (classic / rl)
+        :param step_type: тип шага ('classic' - для supervised обучения / 'rl' - для reinforcement learning обучения)
         :param types_weights: веса типов генерируемых данных для кросс-энтропии
         :param end_infill_id: id end_infill токена для инференса модели
         :param target_types_pred: вес функции потерь для предсказания целевых меток для сгенерированных данных
         :param real_types_match: вес функции потерь для предсказания истинных меток для сгенерированных данных
         :param num_classes: количество типов замаскированных данных, генерируемых моделью (num_classes > max_type_id)
-        :param sample_temperature: температура для семплирования при использовании RL
+        :param samples_num: сгенерированных примеров при RL обучении
+        :param sample_temperature: температура для генерации при RL обучении
         :param self_critical: использовать ли подход Self-critical Sequence Training для bias
         :param with_context: использовать ли контекст при оценке генерации с помощью NER
         :param maximize_distance: вес награды за дальность сгенерированных данных от оригинальных ответов
@@ -68,15 +69,11 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         self.total_steps = total_steps
         self.adaptation_part = adaptation_part
         # Parameters for classic step
-        # TODO Переделать механику весов для классического шага (один вес на весь loss)
         if not isinstance(types_weights, torch.Tensor) and types_weights is not None:
             types_weights = torch.tensor(types_weights)
-        self.g_criterion = nn.CrossEntropyLoss(reduction='mean', ignore_index=-1)
+        self.g_criterion = nn.CrossEntropyLoss(reduction='none', ignore_index=-1)
         self.t_criterion = nn.CrossEntropyLoss(weight=types_weights, reduction='mean', ignore_index=-1)
-        self.gt_criterion = nn.CrossEntropyLoss(reduction='mean', ignore_index=-1)
-        self.gt_term_freq = None
-        if types_weights is not None:
-            self.gt_term_freq = torch.ones((num_classes,), dtype=torch.float) / num_classes
+        self.gt_criterion = nn.CrossEntropyLoss(weight=types_weights, reduction='mean', ignore_index=-1)
         self.gt_alpha = 0.9
         self.train_context = train_context
         self.target_types_pred = target_types_pred
@@ -84,6 +81,7 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         # Parameters for RL
         self.rl_g_criterion = nn.CrossEntropyLoss(reduction='none', ignore_index=-1)
         self.rl_t_criterion = nn.CrossEntropyLoss(weight=types_weights, reduction='none', ignore_index=-1)
+        self.samples_num = samples_num
         self.sample_temperature = sample_temperature
         self.self_critical = self_critical
         self.with_context = with_context
@@ -147,30 +145,39 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
 
     def classic_step(self, inputs: torch.Tensor, tts: torch.Tensor, cer: CharErrorRate,
                      target_type_recall: Metric, real_type_recall: Metric) -> torch.Tensor:
-        target_context = self.tts_to_targets(inputs, tts, [TargetType.CONTEXT])
-        target_infill = self.tts_to_targets(inputs, tts, [TargetType.INFILL, TargetType.INFILL_SPECIAL])
         logits, types_logits = self.forward(inputs[:, :-1], gen_types=self.target_types_pred > 0.)
         logits, types_logits = logits.transpose(2, 1), types_logits.transpose(2, 1)  # B, L, C -> B, C, L
+        # Parse target tokens markup and target token types
+        target_context = self.tts_to_targets(inputs, tts, [TargetType.CONTEXT])
+        target_infill = self.tts_to_targets(inputs, tts, [TargetType.INFILL, TargetType.INFILL_SPECIAL])
+        target_types_list = inputs[tts == TargetType.CONTEXT_SPECIAL.value].cpu()
+        target_types_list = np.vectorize(lambda x: self.tokenizer.id_to_mask_type[x].value)(
+            target_types_list).tolist()
+        target_types = self.tokenizer.mark_up_types(inputs, target_types_list)[:, 1:]
+
+        # Compute main generation loss
+        weights = torch.ones_like(target_infill[:, 1:])
+        if self.t_criterion.weight is not None:
+            weights = torch.sum(one_hot(target_types.clamp_min(0), self.t_criterion.weight.shape[0])
+                                * self.t_criterion.weight, dim=-1)
+        loss_infill = ((self.g_criterion(logits, target_infill[:, 1:]) * weights).sum(dim=-1)
+                       / (target_infill != -1).sum(dim=-1).clamp_min(1)).mean()
+        loss = loss_infill
+        if self.train_context:
+            loss_context = (self.g_criterion(logits, target_context[:, 1:]).sum(dim=-1)
+                            / (target_context != -1).sum(dim=-1).clamp_min(1)).mean()
+            loss += self.train_context * loss_context
+        # Compute target labels loss
+        if self.target_types_pred and self.tokenizer is not None:
+            loss += self.target_types_pred * self.t_criterion(types_logits, target_types)
+            target_type_recall.update(torch.argmax(types_logits, dim=-2), target_types)
+
         # Get fair predictions for answer and their types
         answers_starts = (torch.nonzero(tts == TargetType.CONTEXT_INFILL_SEP.value)[:, 1] + 1).tolist()
         with torch.no_grad():
             generated, _ = self.inference(inputs, tts,
                                           temperature=self.sample_temperature if self.training else 0.,
                                           fresh_start=True)
-        # Compute main generation loss
-        loss_infill = self.g_criterion(logits, target_infill[:, 1:])
-        loss = loss_infill
-        if self.train_context:
-            loss_context = self.g_criterion(logits, target_context[:, 1:])
-            loss += self.train_context * loss_context
-        # Compute target labels loss
-        if self.target_types_pred and self.tokenizer is not None:
-            target_types_list = inputs[tts == TargetType.CONTEXT_SPECIAL.value].cpu()
-            target_types_list = np.vectorize(lambda x: self.tokenizer.id_to_mask_type[x].value)(
-                target_types_list).tolist()
-            target_types = self.tokenizer.mark_up_types(inputs, target_types_list)[:, :-1]
-            loss += self.target_types_pred * self.t_criterion(types_logits, target_types)
-            target_type_recall.update(torch.argmax(types_logits, dim=-2), target_types)
         # Compute real labels loss
         if (self.real_types_match and self.tokenizer is not None
                 and self.ner_model is not None and self.ner_tokenizer is not None):
@@ -186,10 +193,7 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
                 log_probs = log_softmax(self.ner_model(ner_input), dim=-1)
             real_types_list = self.ner_tokenizer.parse_labels_from_marked_up_log_probs(log_probs, ner_labels,
                                                                                        num_answers)
-            real_types = self.tokenizer.mark_up_types(generated, real_types_list)[:, :-1]
-            if self.gt_term_freq is not None and self.training:
-                self.gt_term_freq = self._term_freq_update(real_types, self.gt_term_freq, self.gt_alpha)
-                self.gt_criterion.weight = 1 / (self.gt_term_freq + 0.01)
+            real_types = self.tokenizer.mark_up_types(generated, real_types_list)[:, 1:]
             loss += self.real_types_match * self.gt_criterion(g_types_logits, real_types)
             real_type_recall.update(torch.argmax(g_types_logits, dim=-2), real_types)
         # Compute cer statistics
@@ -198,6 +202,7 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
             for answers_start, answers_number, orig, gen in zip(answers_starts, answers_numbers, inputs, generated):
                 cer.update(self.tokenizer.parse_answers(gen, answers_start, answers_number),
                            self.tokenizer.parse_answers(orig, answers_start))
+
         return loss
 
     def rl_policy_gradient_step(self, inputs: torch.Tensor, tts: torch.Tensor, cer: CharErrorRate, ner_recall: Metric) \
@@ -206,20 +211,28 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         assert self.ner_tokenizer.pad_id == -1, "Pad id for NER tokenizer must be -1"
         assert self.ner_tokenizer.overlap == 0, "Overlap of NER tokenizer must be 0"
 
+        if self.training and self.samples_num > 1:
+            inputs = torch.cat([inputs] * self.samples_num, dim=0)
+            tts = torch.cat([tts] * self.samples_num, dim=0)
         with torch.no_grad():
             predictions, _ = self.inference(inputs, tts,
                                             temperature=self.sample_temperature if self.training else 0.,
                                             fresh_start=True)
-        if self.self_critical and self.training:
-            with torch.no_grad():
-                greedy_pred, _ = self.inference(inputs, tts, fresh_start=True)
-        logits = self.forward(torch.maximum(predictions[:, :-1], torch.tensor(0)))[0].transpose(1, 2)
+        logits = self.forward(predictions[:, :-1].clamp_min(0))[0].transpose(1, 2)
+        # Make markup for sampled tokens/actions
         target_infill = self.tts_to_targets(
             predictions, tts,
             [TargetType.CONTEXT, TargetType.CONTEXT_SPECIAL, TargetType.CONTEXT_INFILL_SEP], reverse=True
-        )[:, 1: logits.size(2) + 1]
-        # Compute the log probabilities of the current states
-        state_log_prob = self.rl_g_criterion(logits, target_infill).sum(dim=-1) / (target_infill != -1).sum(dim=-1)
+        )[:, 1: 1 + logits.size(2)]
+        # Compute the log probabilities of the sampled actions
+        state_log_prob = (self.rl_g_criterion(logits, target_infill).sum(dim=-1)
+                          / (target_infill != -1).sum(dim=-1).clamp_min(1))
+
+        # Get bias actions
+        if self.self_critical and self.training:
+            with torch.no_grad():
+                greedy_pred, _ = self.inference(inputs, tts, fresh_start=True)
+
         # Compute distance between original and predicted answers
         local_cer = []
         greedy_cer = []
@@ -234,6 +247,7 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
             if self.maximize_distance and self.self_critical and self.training:
                 greedy_answers = self.tokenizer.parse_answers(greedy_pred[i], answers_starts[i], answers_numbers[i])
                 greedy_cer.append(char_error_rate(greedy_answers, orig_answers).item())
+
         # Compute reward
         reward = self._compute_reward(predictions, tts, local_cer, ner_recall)
         bias_reward = 0.
@@ -304,9 +318,7 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
 
         if self.maximize_distance:
             reward += self.maximize_distance * torch.tensor(local_cer, device=self.device)
-        # if self.sameness_penalty:
-        #     reward -= self.sameness_penalty *
-        #               torch.clamp_min(self.sameness_threshold / (state_log_prob + 1e-6) - 1.0, 0.0)
+
         return reward
 
     def training_step(self, batch, batch_idx):
