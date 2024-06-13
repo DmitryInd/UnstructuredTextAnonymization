@@ -181,8 +181,6 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         # Compute real labels loss
         if (self.real_types_match and self.tokenizer is not None
                 and self.ner_model is not None and self.ner_tokenizer is not None):
-            assert self.ner_tokenizer.pad_id == -1, "Pad id for NER tokenizer must be -1"
-            assert self.ner_tokenizer.overlap == 0, "Overlap of NER tokenizer must be 0"
             _, g_types_logits = self.forward(torch.maximum(generated[:, :-1], torch.tensor(0)), gen_types=True)
             g_types_logits = g_types_logits.transpose(2, 1)  # B, L, C -> B, C, L
             sample_answers = [self.tokenizer.parse_answers(gen, st) for st, gen in zip(answers_starts, generated)]
@@ -190,7 +188,8 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
             pseudo_labels = [list(range(1, num + 1)) for num in num_answers]
             ner_input, ner_labels = self._prepare_input_for_ner(sample_answers, pseudo_labels)
             with torch.no_grad():
-                log_probs = log_softmax(self.ner_model(ner_input), dim=-1)
+                padding = ner_input.ne(self.ner_tokenizer.word2index[self.ner_tokenizer.pad_token])
+                log_probs = log_softmax(self.ner_model(ner_input, encoder_attention_mask=padding), dim=-1)
             real_types_list = self.ner_tokenizer.parse_labels_from_marked_up_log_probs(log_probs, ner_labels,
                                                                                        num_answers)
             real_types = self.tokenizer.mark_up_types(generated, real_types_list)[:, 1:]
@@ -208,9 +207,7 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
     def rl_policy_gradient_step(self, inputs: torch.Tensor, tts: torch.Tensor, cer: CharErrorRate, ner_recall: Metric) \
             -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         assert self.tokenizer is not None and self.ner_tokenizer is not None and self.ner_model is not None
-        assert self.ner_tokenizer.pad_id == -1, "Pad id for NER tokenizer must be -1"
-        assert self.ner_tokenizer.overlap == 0, "Overlap of NER tokenizer must be 0"
-
+        batch_size = inputs.shape[0]
         if self.training and self.samples_num > 1:
             inputs = torch.cat([inputs] * self.samples_num, dim=0)
             tts = torch.cat([tts] * self.samples_num, dim=0)
@@ -231,7 +228,8 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         # Get bias actions
         if self.self_critical and self.training:
             with torch.no_grad():
-                greedy_pred, _ = self.inference(inputs, tts, fresh_start=True)
+                # All samples are same with greedy decoding
+                greedy_pred, _ = self.inference(inputs[:batch_size], tts[:batch_size], fresh_start=True)
 
         # Compute distance between original and predicted answers
         local_cer = []
@@ -244,7 +242,7 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
             cer.update(gen_answers, orig_answers)
             if self.maximize_distance:
                 local_cer.append(char_error_rate(gen_answers, orig_answers).item())
-            if self.maximize_distance and self.self_critical and self.training:
+            if self.maximize_distance and self.self_critical and self.training and i < batch_size:
                 greedy_answers = self.tokenizer.parse_answers(greedy_pred[i], answers_starts[i], answers_numbers[i])
                 greedy_cer.append(char_error_rate(greedy_answers, orig_answers).item())
 
@@ -252,7 +250,9 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         reward = self._compute_reward(predictions, tts, local_cer, ner_recall)
         bias_reward = 0.
         if self.self_critical and self.training:
-            bias_reward = self._compute_reward(greedy_pred, tts, greedy_cer)
+            bias_reward = self._compute_reward(greedy_pred, tts[:batch_size], greedy_cer)
+            if self.training and self.samples_num > 1:
+                bias_reward = torch.cat([bias_reward] * self.samples_num, dim=0)
         # Compute loss from reward
         loss = torch.mean(state_log_prob * (reward - bias_reward))
         # Estimate the sameness of generation
@@ -282,7 +282,9 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         # Get real types of infilled masks
         ner_input, ner_labels = self._prepare_input_for_ner(sample_answers, labels)
         with torch.no_grad():
-            ner_logits = self.ner_model(ner_input).transpose(1, 2)  # B, L, C -> B, C, L
+            # B, L, C -> B, C, L
+            padding = ner_input.ne(self.ner_tokenizer.word2index[self.ner_tokenizer.pad_token])
+            ner_logits = self.ner_model(ner_input, encoder_attention_mask=padding).transpose(1, 2)
         # B, C, L -> B, L -> B; (-inf; 0]
         reward = -self.rl_t_criterion(ner_logits, ner_labels).sum(dim=-1) / (ner_labels != -1).sum(dim=-1).clamp_min(1)
         if ner_recall is not None:
@@ -291,7 +293,9 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
             context = self.tokenizer.parse_context(predictions, tts, answers_starts)
             ner_input, ner_labels = self._prepare_input_for_ner(sample_answers, labels, separator=' ', context=context)
             with torch.no_grad():
-                ner_logits = self.ner_model(ner_input).transpose(1, 2)  # B, L, C -> B, C, L
+                # B, L, C -> B, C, L
+                padding = ner_input.ne(self.ner_tokenizer.word2index[self.ner_tokenizer.pad_token])
+                ner_logits = self.ner_model(ner_input, encoder_attention_mask=padding).transpose(1, 2)
             reward += (self.with_context * -self.rl_t_criterion(ner_logits, ner_labels).sum(dim=-1)
                        / (ner_labels != -1).sum(dim=-1).clamp_min(1))
         if self.repetition_penalty:
@@ -371,6 +375,13 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         self.log('grads_norm', grads_norm, on_step=True, on_epoch=False, logger=True, prog_bar=True)
 
     def inference(self, inputs: torch.Tensor, tts: torch.Tensor, temperature=0.0, fresh_start=False):
+        """
+        :param inputs: Тензор с входными данными - BxL.
+        :param tts: Разметка токенов (контекст/ответы) - BxL.
+        :param temperature: Температура для семплирования токенов из распределения вероятностей (0 - hard max).
+        :param fresh_start: Начинать ли с конца контекста или последнего осмысленного токена в примерах.
+        :return: Тензор предсказаний B, L; тензор соответствующих им логитов B, L, C
+        """
         predictions = inputs.detach().clone()  # B, L
         logits = []
         masks_number = (tts == TargetType.CONTEXT_SPECIAL.value).sum(dim=1)
@@ -402,7 +413,23 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
             l_border += 1
         return predictions, torch.cat(logits, dim=1)
 
-    def beam_search(self, inputs: torch.Tensor, tts: torch.Tensor, n_beams=1, temperature=0.0, fresh_start=False):
+    def beam_search(self, inputs: torch.Tensor, tts: torch.Tensor, n_beams=1, temperature=1.0, fresh_start=False):
+        """
+        :param inputs: Тензор с входными данными - BxL.
+        :param tts: Разметка токенов (контекст/ответы) - BxL.
+        :param n_beams: Количество создаваемых лучей.
+        :param temperature: Температура для сглаживания распределения вероятностей токенов.
+        :param fresh_start: Начинать ли с конца контекста или последнего осмысленного токена в примерах.
+        :return: Тензор предсказаний B, N_beams, L; тензор соответствующих им логитов B, N_beams, L, C
+        """
+        # Small optimization
+        if n_beams == 1:
+            predictions, logits = self.inference(inputs, tts, fresh_start=fresh_start)
+            predictions = predictions[:, None, :]
+            logits = logits[:, None, :, :]
+            return predictions, logits
+
+        # Real beam search
         logits: List[Optional[torch.Tensor]] = [None] * n_beams
         past_key_values: List[Optional[Tuple[Tuple[torch.Tensor, torch.Tensor], ...]]] = [None] * n_beams
         masks_number = (tts == TargetType.CONTEXT_SPECIAL.value).sum(dim=1)[:, None].expand(-1, n_beams ** 2).clone()
@@ -425,14 +452,10 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
                     logits[beam_id // n_beams] = results.logits
                 else:
                     logits[beam_id // n_beams] = torch.cat([logits[beam_id // n_beams], results.logits], dim=1)
-                last_token_log_distr = log_softmax(results.logits[:, l_border - shift], dim=-1)
                 past_key_values[beam_id // n_beams] = results.past_key_values
 
-                if temperature:
-                    hard_pred = torch.argsort(gumbel_softmax(results.logits[:, l_border - shift], tau=temperature),
-                                              descending=True, dim=-1)  # B, C
-                else:
-                    hard_pred = torch.argsort(results.logits[:, l_border - shift], descending=True, dim=-1)  # B, C
+                last_token_log_distr = log_softmax(results.logits[:, l_border - shift] / temperature, dim=-1)
+                hard_pred = torch.argsort(last_token_log_distr, descending=True, dim=-1)  # B, C
                 hard_pred = hard_pred[:, :n_beams]  # B, N_beams
 
                 for i, row in enumerate(hard_pred):
@@ -537,6 +560,9 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         :return: входной тензор B x L' для NER модели, тензор B x L' с разметкой,
                  списки границ сгенерированных ответов для каждого примера
         """
+        assert self.ner_tokenizer.pad_id == -1, "Pad id for NER tokenizer must be -1"
+        assert self.ner_tokenizer.overlap == 0, "Overlap of NER tokenizer must be 0"
+
         tokenized_answers = []
         labels_sets = []
         if self.ner_replace is None:

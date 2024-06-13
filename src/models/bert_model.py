@@ -47,8 +47,8 @@ class PretrainedBertNER(pl.LightningModule):
         self.val_precision = Precision(task="multiclass", num_classes=num_classes, ignore_index=pad_index)
         self.val_f1_score = F1Score(task="multiclass", num_classes=num_classes, ignore_index=pad_index)
 
-    def forward(self, x):
-        x = self.model(x).last_hidden_state
+    def forward(self, x, encoder_attention_mask=None):
+        x = self.model(x, encoder_attention_mask=encoder_attention_mask).last_hidden_state
         x = self.head(x)  # B, L, C
         return x
 
@@ -70,7 +70,8 @@ class PretrainedBertNER(pl.LightningModule):
             self.freeze_params(self.model)  # Adaptation of new parameters to pretrained
         else:
             self.freeze_params(self.model, reverse=True)
-        predictions = self(x).transpose(2, 1)  # B, L, C -> B, C, L
+        padding = self._create_attention_mask(y)
+        predictions = self(x, encoder_attention_mask=padding).transpose(2, 1)  # B, L, C -> B, C, L
         loss = self.criterion(predictions, y)
         hard_pred = torch.argmax(predictions, dim=-2)
         self.train_recall(hard_pred, y.where(y != self.other_index, self.pad_index))
@@ -85,7 +86,8 @@ class PretrainedBertNER(pl.LightningModule):
     @torch.no_grad()
     def validation_step(self, batch, batch_idx):
         _, x, y = batch
-        predictions = self(x).transpose(2, 1)  # B, L, C -> B, C, L
+        padding = self._create_attention_mask(y)
+        predictions = self(x, encoder_attention_mask=padding).transpose(2, 1)  # B, L, C -> B, C, L
         loss = self.criterion(predictions, y)
         hard_pred = torch.argmax(predictions, dim=-2)
         self.val_recall(hard_pred, y.where(y != self.other_index, self.pad_index))
@@ -99,7 +101,8 @@ class PretrainedBertNER(pl.LightningModule):
     @torch.no_grad()
     def test_step(self, batch, batch_idx):
         _, x, y = batch
-        hard_pred = torch.argmax(self(x).transpose(2, 1), dim=-2)
+        padding = self._create_attention_mask(y)
+        hard_pred = torch.argmax(self(x, encoder_attention_mask=padding).transpose(2, 1), dim=-2)
         self.val_recall(hard_pred, y.where(y != self.other_index, self.pad_index))
         self.val_precision(hard_pred, y)
         self.val_f1_score(hard_pred, y)
@@ -111,3 +114,11 @@ class PretrainedBertNER(pl.LightningModule):
     def freeze_params(model: nn.Module, reverse=False):
         for param in model.parameters():
             param.requires_grad = reverse
+
+    def _create_attention_mask(self, markup: torch.Tensor):
+        # Input:  [CLS] token token ... [EOS] [PAD] [PAD] ...
+        # Markup: [PAD] label label ... [PAD] [PAD] [PAD] ...
+        attention_mask = markup.ne(self.pad_index).int()
+        attention_mask[0] = 1  # For [CLS] token
+        attention_mask[(1 - attention_mask).cumsum(dim=-1).eq(1)] = 1  # For [EOS] token
+        return attention_mask
