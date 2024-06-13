@@ -115,10 +115,10 @@ class PretrainedBertNER(pl.LightningModule):
         for param in model.parameters():
             param.requires_grad = reverse
 
-    def _create_attention_mask(self, markup: torch.Tensor):
+    def _create_attention_mask(self, markup: torch.Tensor) -> torch.Tensor:
         # Input:  [CLS] token token ... [EOS] [PAD] [PAD] ...
         # Markup: [PAD] label label ... [PAD] [PAD] [PAD] ...
         attention_mask = markup.ne(self.pad_index).int()
-        attention_mask[0] = 1  # For [CLS] token
+        attention_mask[:, 0] = 1  # For [CLS] token
         attention_mask[(1 - attention_mask).cumsum(dim=-1).eq(1)] = 1  # For [EOS] token
         return attention_mask
