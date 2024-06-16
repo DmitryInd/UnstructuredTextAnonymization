@@ -51,7 +51,7 @@ class DonatedDatasetAnonymization(Anonymization):
                     if specific_category in self.ref_book:
                         substitution = np.random.choice(self.ref_book[specific_category])
                     elif general_category in self.general_ref_book:
-                        substitution = np.random.choice(self.general_ref_book[specific_category])
+                        substitution = np.random.choice(self.general_ref_book[general_category])
                     substitutions.append(substitution)
 
                 variants.append(substitutions)

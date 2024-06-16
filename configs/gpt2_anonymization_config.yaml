@@ -4,7 +4,7 @@ pretrained_tokenizer: "data/tokenizer/official_gpt2_encoder"
 max_full_ex_len: 128
 max_only_context_len: 96
 overlap: 40
-gen_model_batch_size: 23
+gen_model_batch_size: 24
 var_num: 3
-model_version: 23
+model_version: 30
 log_dir: "./gpt2-small"

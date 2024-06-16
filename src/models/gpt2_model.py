@@ -189,7 +189,7 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
             ner_input, ner_labels = self._prepare_input_for_ner(sample_answers, pseudo_labels)
             with torch.no_grad():
                 padding = ner_input.ne(self.ner_tokenizer.word2index[self.ner_tokenizer.pad_token])
-                log_probs = log_softmax(self.ner_model(ner_input, encoder_attention_mask=padding), dim=-1)
+                log_probs = log_softmax(self.ner_model(ner_input, attention_mask=padding), dim=-1)
             real_types_list = self.ner_tokenizer.parse_labels_from_marked_up_log_probs(log_probs, ner_labels,
                                                                                        num_answers)
             real_types = self.tokenizer.mark_up_types(generated, real_types_list)[:, 1:]
@@ -284,7 +284,7 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         with torch.no_grad():
             # B, L, C -> B, C, L
             padding = ner_input.ne(self.ner_tokenizer.word2index[self.ner_tokenizer.pad_token])
-            ner_logits = self.ner_model(ner_input, encoder_attention_mask=padding).transpose(1, 2)
+            ner_logits = self.ner_model(ner_input, attention_mask=padding).transpose(1, 2)
         # B, C, L -> B, L -> B; (-inf; 0]
         reward = -self.rl_t_criterion(ner_logits, ner_labels).sum(dim=-1) / (ner_labels != -1).sum(dim=-1).clamp_min(1)
         if ner_recall is not None:
@@ -295,7 +295,7 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
             with torch.no_grad():
                 # B, L, C -> B, C, L
                 padding = ner_input.ne(self.ner_tokenizer.word2index[self.ner_tokenizer.pad_token])
-                ner_logits = self.ner_model(ner_input, encoder_attention_mask=padding).transpose(1, 2)
+                ner_logits = self.ner_model(ner_input, attention_mask=padding).transpose(1, 2)
             reward += (self.with_context * -self.rl_t_criterion(ner_logits, ner_labels).sum(dim=-1)
                        / (ner_labels != -1).sum(dim=-1).clamp_min(1))
         if self.repetition_penalty:

@@ -82,7 +82,7 @@ if __name__ == '__main__':
     elif model_config["step_type"] == "rl":
         text_infill_checkpoint_callback = ModelCheckpoint(filename='best-{epoch}', monitor='val_reward',
                                                           mode='max', save_top_k=1)
-        early_stopping_callback = early_stopping.EarlyStopping(monitor="val_reward", patience=5, mode='max')
+        early_stopping_callback = early_stopping.EarlyStopping(monitor="val_reward", patience=10, mode='max')
     else:
         raise ValueError(f"Invalid step_type: {model_config['step_type']}")
     trainer_args = {

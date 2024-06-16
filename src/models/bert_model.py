@@ -47,8 +47,8 @@ class PretrainedBertNER(pl.LightningModule):
         self.val_precision = Precision(task="multiclass", num_classes=num_classes, ignore_index=pad_index)
         self.val_f1_score = F1Score(task="multiclass", num_classes=num_classes, ignore_index=pad_index)
 
-    def forward(self, x, encoder_attention_mask=None):
-        x = self.model(x, encoder_attention_mask=encoder_attention_mask).last_hidden_state
+    def forward(self, x, attention_mask=None):
+        x = self.model(x, attention_mask=attention_mask).last_hidden_state
         x = self.head(x)  # B, L, C
         return x
 
@@ -70,8 +70,8 @@ class PretrainedBertNER(pl.LightningModule):
             self.freeze_params(self.model)  # Adaptation of new parameters to pretrained
         else:
             self.freeze_params(self.model, reverse=True)
-        padding = self._create_attention_mask(y)
-        predictions = self(x, encoder_attention_mask=padding).transpose(2, 1)  # B, L, C -> B, C, L
+        padding = None  # self._create_attention_mask(y)
+        predictions = self(x, attention_mask=padding).transpose(2, 1)  # B, L, C -> B, C, L
         loss = self.criterion(predictions, y)
         hard_pred = torch.argmax(predictions, dim=-2)
         self.train_recall(hard_pred, y.where(y != self.other_index, self.pad_index))
@@ -86,8 +86,8 @@ class PretrainedBertNER(pl.LightningModule):
     @torch.no_grad()
     def validation_step(self, batch, batch_idx):
         _, x, y = batch
-        padding = self._create_attention_mask(y)
-        predictions = self(x, encoder_attention_mask=padding).transpose(2, 1)  # B, L, C -> B, C, L
+        padding = None  # self._create_attention_mask(y)
+        predictions = self(x, attention_mask=padding).transpose(2, 1)  # B, L, C -> B, C, L
         loss = self.criterion(predictions, y)
         hard_pred = torch.argmax(predictions, dim=-2)
         self.val_recall(hard_pred, y.where(y != self.other_index, self.pad_index))
@@ -101,8 +101,8 @@ class PretrainedBertNER(pl.LightningModule):
     @torch.no_grad()
     def test_step(self, batch, batch_idx):
         _, x, y = batch
-        padding = self._create_attention_mask(y)
-        hard_pred = torch.argmax(self(x, encoder_attention_mask=padding).transpose(2, 1), dim=-2)
+        padding = None  # self._create_attention_mask(y)
+        hard_pred = torch.argmax(self(x, attention_mask=padding).transpose(2, 1), dim=-2)
         self.val_recall(hard_pred, y.where(y != self.other_index, self.pad_index))
         self.val_precision(hard_pred, y)
         self.val_f1_score(hard_pred, y)
