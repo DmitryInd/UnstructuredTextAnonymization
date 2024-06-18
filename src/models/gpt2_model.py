@@ -148,23 +148,23 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
         logits, types_logits = self.forward(inputs[:, :-1], gen_types=self.target_types_pred > 0.)
         logits, types_logits = logits.transpose(2, 1), types_logits.transpose(2, 1)  # B, L, C -> B, C, L
         # Parse target tokens markup and target token types
-        target_context = self.tts_to_targets(inputs, tts, [TargetType.CONTEXT])
-        target_infill = self.tts_to_targets(inputs, tts, [TargetType.INFILL, TargetType.INFILL_SPECIAL])
+        target_context = self.tts_to_targets(inputs, tts, [TargetType.CONTEXT])[:, 1:]
+        target_infill = self.tts_to_targets(inputs, tts, [TargetType.INFILL, TargetType.INFILL_SPECIAL])[:, 1:]
         target_types_list = inputs[tts == TargetType.CONTEXT_SPECIAL.value].cpu()
         target_types_list = np.vectorize(lambda x: self.tokenizer.id_to_mask_type[x].value)(
             target_types_list).tolist()
         target_types = self.tokenizer.mark_up_types(inputs, target_types_list)[:, 1:]
 
         # Compute main generation loss
-        weights = torch.ones_like(target_infill[:, 1:])
+        weights = torch.ones_like(target_infill)
         if self.t_criterion.weight is not None:
             weights = torch.sum(one_hot(target_types.clamp_min(0), self.t_criterion.weight.shape[0])
                                 * self.t_criterion.weight, dim=-1)
-        loss_infill = ((self.g_criterion(logits, target_infill[:, 1:]) * weights).sum(dim=-1)
+        loss_infill = ((self.g_criterion(logits, target_infill) * weights).sum(dim=-1)
                        / (target_infill != -1).sum(dim=-1).clamp_min(1)).mean()
         loss = loss_infill
         if self.train_context:
-            loss_context = (self.g_criterion(logits, target_context[:, 1:]).sum(dim=-1)
+            loss_context = (self.g_criterion(logits, target_context).sum(dim=-1)
                             / (target_context != -1).sum(dim=-1).clamp_min(1)).mean()
             loss += self.train_context * loss_context
         # Compute target labels loss
@@ -296,8 +296,8 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
                 # B, L, C -> B, C, L
                 padding = ner_input.ne(self.ner_tokenizer.word2index[self.ner_tokenizer.pad_token])
                 ner_logits = self.ner_model(ner_input, attention_mask=padding).transpose(1, 2)
-            reward += (self.with_context * -self.rl_t_criterion(ner_logits, ner_labels).sum(dim=-1)
-                       / (ner_labels != -1).sum(dim=-1).clamp_min(1))
+            reward += self.with_context * -(self.rl_t_criterion(ner_logits, ner_labels).sum(dim=-1)
+                                            / (ner_labels != -1).sum(dim=-1).clamp_min(1))
         if self.repetition_penalty:
             if self._type_gen_tf[0] is None:
                 self._type_gen_tf = [torch.ones((self.tokenizer.vocab_size,), device=self.device)
@@ -316,7 +316,7 @@ class PretrainedGPT2TextInfilling(pl.LightningModule):
                     )
                 penalty = (one_hot_pred * (self._type_gen_tf[i] - self.repetition_threshold).clamp_min(0)).sum(dim=-1)
                 penalty = (penalty.where(target_types == i, 0).sum(dim=-1)
-                           / (type_predictions != -1).sum(dim=-1).clamp_min(1))
+                           / (target_types == i).sum(dim=-1).clamp_min(1))
                 type_weight = 1 if self.rl_t_criterion.weight is None else self.rl_t_criterion.weight[i]
                 reward -= self.repetition_penalty * type_weight * penalty
 
